@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+# BATOCERA_CONTROL_GAME_LAUNCH
+"""Apply Batocera Control's per-game FEX settings, then fail open into the game."""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import sys
+import time
+
+BASE_FEX_CONFIGS = (
+    pathlib.Path("/userdata/system/.config/fex-emu/Config.json"),
+    pathlib.Path("/usr/share/fex-emu/Config.json"),
+)
+TWEAKS_CONFIG = pathlib.Path("/userdata/system/configs/batocera-control/game-tweaks.json")
+FEX_PROFILES_CONFIG = pathlib.Path("/userdata/system/configs/batocera-control/fex-profiles.json")
+
+
+def appid() -> str | None:
+    for key in ("STEAM_COMPAT_APP_ID", "SteamAppId", "SteamGameId"):
+        value = os.environ.get(key, "").strip()
+        if value.isdigit():
+            return value
+    return None
+
+
+def load_json(path: pathlib.Path) -> object:
+    if path.stat().st_size > 1024 * 1024:
+        raise ValueError(f"{path} is too large")
+    with path.open(encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def load_contract() -> dict:
+    contract = load_json(FEX_PROFILES_CONFIG)
+    profiles = contract.get("profiles") if isinstance(contract, dict) else None
+    if not isinstance(contract, dict) or not isinstance(contract.get("defaults"), dict):
+        raise ValueError("invalid FEX profile contract")
+    if not isinstance(profiles, dict) or "default" not in profiles:
+        raise ValueError("invalid FEX profile contract")
+    for profile in profiles.values():
+        if not isinstance(profile, dict) or not isinstance(profile.get("config"), dict):
+            raise ValueError("invalid FEX profile contract")
+    return contract
+
+
+def load_tweaks(defaults: dict) -> dict:
+    data = json.loads(json.dumps(defaults))
+    try:
+        loaded = load_json(TWEAKS_CONFIG)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return data
+    if not isinstance(loaded, dict):
+        return data
+    if isinstance(loaded.get("global"), dict):
+        data.setdefault("global", {}).update(loaded["global"])
+    if isinstance(loaded.get("games"), dict):
+        data["games"] = loaded["games"]
+    return data
+
+
+def merged_settings(tweaks: dict, game_id: str | None) -> dict:
+    settings = dict(tweaks.get("global", {}))
+    game = tweaks.get("games", {}).get(str(game_id)) if game_id else None
+    if isinstance(game, dict) and game.get("enabled") is not False:
+        settings.update(game)
+    return settings
+
+
+def base_fex_config() -> dict:
+    for path in BASE_FEX_CONFIGS:
+        try:
+            config = load_json(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(config, dict):
+            return config
+    raise FileNotFoundError("no usable Batocera FEX Config.json")
+
+
+def runtime_config_dir() -> pathlib.Path:
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    base = pathlib.Path(runtime) if runtime and pathlib.Path(runtime).is_dir() else pathlib.Path("/tmp")
+    return base / f"batocera-control-fex-{os.getuid()}"
+
+
+def resolve_profile(settings: dict, profiles: dict) -> dict:
+    profile_id = settings.get("fexProfile")
+    if isinstance(profile_id, str) and profile_id in profiles:
+        return profiles[profile_id]["config"]
+    custom = settings.get("fexConfig")
+    if isinstance(custom, dict):
+        return custom
+    return profiles["default"]["config"]
+
+
+def apply_fex(settings: dict, game_id: str | None, profiles: dict) -> None:
+    config = base_fex_config()
+    allowed = set().union(*(profile["config"].keys() for profile in profiles.values()))
+    selected = resolve_profile(settings, profiles)
+    config.setdefault("Config", {}).update(
+        {key: str(value) for key, value in selected.items() if key in allowed}
+    )
+    thunks = settings.get("thunks") if isinstance(settings.get("thunks"), dict) else {}
+    existing = config.get("ThunksDB")
+    if isinstance(existing, dict):
+        config["ThunksDB"] = {name: 1 if thunks.get(name, True) else 0 for name in existing}
+
+    target_dir = runtime_config_dir()
+    target_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    cutoff = time.time() - 86400
+    for old in target_dir.glob("*.json"):
+        try:
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+        except OSError:
+            pass
+    target = target_dir / f"{game_id or 'global'}.{os.getpid()}.json"
+    temporary = target.with_name(f".{target.name}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(config, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        os.environ["FEX_APP_CONFIG"] = str(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args:
+        print("usage: batocera-control-game-launch COMMAND [ARGS...]", file=sys.stderr)
+        return 2
+    try:
+        contract = load_contract()
+        settings = merged_settings(load_tweaks(contract["defaults"]), appid())
+        apply_fex(settings, appid(), contract["profiles"])
+    except Exception as exc:
+        # Settings must never become a reason a game stops launching.
+        print(f"batocera-control-game-launch: settings skipped: {exc}", file=sys.stderr)
+    try:
+        os.execvp(args[0], args)
+    except OSError as exc:
+        print(f"batocera-control-game-launch: failed to exec game: {exc}", file=sys.stderr)
+        return 126
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

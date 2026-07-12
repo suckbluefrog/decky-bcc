@@ -1,0 +1,6 @@
+{
+  "name": "Batocera Control",
+  "author": "suckbluefrog / Batocera / Armada",
+  "flags": ["root"],
+  "api_version": 1
+}
