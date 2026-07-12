@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 - 2026-07-12
+
+- Support the x64-only Batocera LSFG-VK layer used by x86 handhelds while
+  continuing to require the user's purchased `Lossless.dll`.
+- Keep Proton, resolution, LED, and LSFG controls available on x86, but never
+  offer or auto-inject the ARM-only FEX launch wrapper there.
+- Detect Batocera's native AMD TDP stack and direct x86 users to the installed
+  SimpleDeckyTDP controls instead of reporting a missing Odin service.
+
 ## 0.2.0 - 2026-07-12
 
 - Prevent joystick LED controls and paddle shortcuts from changing the

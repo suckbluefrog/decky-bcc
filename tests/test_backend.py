@@ -159,6 +159,13 @@ class PaddleActionTests(unittest.TestCase):
 
 
 class PersistentRuntimeTests(unittest.TestCase):
+    def test_arm_host_survives_fex_x86_personality(self):
+        with (
+            mock.patch.object(runtime.platform, "machine", return_value="x86_64"),
+            mock.patch.object(runtime.Path, "read_bytes", return_value=b"qcom,sm8550 ayn,thor"),
+        ):
+            self.assertTrue(runtime._arm_host())
+
     def test_installs_versioned_helper_to_stable_userdata_path(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -167,6 +174,7 @@ class PersistentRuntimeTests(unittest.TestCase):
             with (
                 mock.patch.object(runtime, "STABLE_WRAPPER", wrapper),
                 mock.patch.object(runtime, "STABLE_FEX_CONTRACT", contract),
+                mock.patch.object(runtime, "_arm_host", return_value=True),
             ):
                 state = runtime.ensure_runtime()
                 second = runtime.ensure_runtime()
@@ -174,6 +182,24 @@ class PersistentRuntimeTests(unittest.TestCase):
             self.assertTrue(second["supported"])
             self.assertEqual(stat.S_IMODE(wrapper.stat().st_mode), 0o755)
             self.assertIn("default", json.loads(contract.read_text(encoding="utf-8"))["profiles"])
+
+    def test_x86_does_not_offer_or_install_fex_wrapper(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            wrapper = root / "bin" / "batocera-control-game-launch"
+            contract = root / "config" / "fex-profiles.json"
+            with (
+                mock.patch.object(runtime, "STABLE_WRAPPER", wrapper),
+                mock.patch.object(runtime, "STABLE_FEX_CONTRACT", contract),
+                mock.patch.object(runtime, "_arm_host", return_value=False),
+            ):
+                state = runtime.ensure_runtime()
+
+            self.assertFalse(state["supported"])
+            self.assertEqual(state["path"], "")
+            self.assertIn("ARM64", state["reason"])
+            self.assertFalse(wrapper.exists())
+            self.assertFalse(contract.exists())
 
     def test_launch_helper_fails_open_when_fex_config_is_missing(self):
         helper = PLUGIN_ROOT / "py_modules" / "batocera-control-game-launch"

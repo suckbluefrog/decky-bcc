@@ -12,6 +12,8 @@ FACTORY_POWER_CONFIG = Path("/usr/share/batocera-control/power-profiles.conf")
 BUNDLED_POWER_CONFIG = Path("/userdata/system/configs/batocera-control/power-profiles.factory.conf")
 PROFILES = ("eco", "balanced", "performance")
 POWER_SCRIPT = Path("/userdata/system/scripts/odin-power")
+AMD_TDP = Path("/usr/bin/batocera-amd-tdp")
+SIMPLE_DECKY_TDP = Path("/userdata/system/homebrew/plugins/SimpleDeckyTDP/plugin.json")
 
 
 def supported():
@@ -20,6 +22,10 @@ def supported():
 
 def unsupported_reason():
     if not POWER_SCRIPT.is_file():
+        if AMD_TDP.is_file() and SIMPLE_DECKY_TDP.is_file():
+            return "AMD TDP is managed by SimpleDeckyTDP on this x86 handheld"
+        if AMD_TDP.is_file():
+            return "Use Batocera's native AMD TDP controls on this x86 handheld"
         return "Odin power service is not installed"
     if not any(path.exists() for path in (FACTORY_POWER_CONFIG, BUNDLED_POWER_CONFIG)):
         return "Power profile definitions are not installed"

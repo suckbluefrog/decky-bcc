@@ -1,6 +1,6 @@
 {
   "name": "Batocera Control",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "maintainer": "suckbluefrog <suckbluefrog@proton.me>",
   "upstream": {
     "repository": "https://github.com/virtudude/armada",
@@ -17,6 +17,8 @@
   },
   "audited": "2026-07-12",
   "testedOn": [
-    "Batocera Odin 3 / SM8750"
+    "Batocera Odin 3 / SM8750",
+    "Batocera AYN Thor / SM8550",
+    "Batocera ROG Ally / x86_64"
   ]
 }

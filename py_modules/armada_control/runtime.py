@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import threading
 from pathlib import Path
 
@@ -18,6 +19,21 @@ RUNTIME_DIR = Path("/userdata/system/configs/batocera-control")
 STABLE_WRAPPER = Path("/userdata/system/bin/batocera-control-game-launch")
 STABLE_FEX_CONTRACT = RUNTIME_DIR / "fex-profiles.json"
 _LOCK = threading.Lock()
+
+
+def _arm_host() -> bool:
+    if platform.machine().lower() in {"aarch64", "arm64"}:
+        return True
+    # Decky can run under FEX and report x86_64 on an ARM host. Device-tree and
+    # Batocera's board marker remain native and distinguish that from x86 PCs.
+    for path in (Path("/proc/device-tree/compatible"), Path("/usr/share/batocera/batocera.arch")):
+        try:
+            marker = path.read_bytes().replace(b"\0", b" ").lower()
+        except OSError:
+            continue
+        if any(token in marker for token in (b"aarch64", b"arm64", b"qualcomm", b"qcom", b"sm8550", b"sm8750", b"qcs")):
+            return True
+    return False
 
 
 def _validated_contract_text() -> str:
@@ -46,6 +62,12 @@ def _write_if_changed(path: Path, text: str, mode: int) -> None:
 
 def ensure_runtime() -> dict[str, object]:
     """Install to userdata so existing Steam launch options survive plugin updates/removal."""
+    if not _arm_host():
+        return {
+            "supported": False,
+            "path": "",
+            "reason": "FEX profiles are available only on ARM64 Batocera systems",
+        }
     with _LOCK:
         try:
             wrapper = BUNDLED_WRAPPER.read_text(encoding="utf-8")

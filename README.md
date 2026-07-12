@@ -1,6 +1,6 @@
 # Batocera Control
 
-Batocera-native Decky controls for AYN handhelds, derived from Armada Control.
+Batocera-native Decky controls for ARM and x86 handhelds, derived from Armada Control.
 This repository contains source, a prebuilt Decky frontend, the Python backend,
 and a network-free installer suitable for Batocera Steam Tools.
 
@@ -12,7 +12,7 @@ non-reproducible when upstream interfaces changed. It also allowed the plugin
 to overwrite the battery LED policy and inject a Steam launch helper that did
 not exist on Batocera.
 
-Version 0.2.0 is pinned to the provenance recorded in `SOURCE.json`. It keeps
+Version 0.2.1 is pinned to the provenance recorded in `SOURCE.json`. It keeps
 the system-owned status LED separate from the joystick rings and uses native
 Batocera services for SSH and RSInput calibration.
 
@@ -52,6 +52,11 @@ the next Steam/GamepadUI launch. The installer moves an old standalone
 loaded, while retaining its config and `~/lsfg` script for rollback. Remove the
 old `~/lsfg` prefix from per-game Steam launch options before enabling the
 global Batocera layer.
+
+On x86 handhelds, the x64/Wine layer is sufficient. Compatibility-tool,
+resolution, LED, and LSFG controls remain available, while the ARM-only FEX
+controls are disabled. Existing Batocera AMD TDP/SimpleDeckyTDP controls stay
+authoritative so two Decky backends cannot race the same power limits.
 
 ## Develop and verify
 
