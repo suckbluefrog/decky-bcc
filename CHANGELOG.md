@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 - 2026-07-12
+
+- Distinguish an x86 AMD handheld from ARM images that happen to include the
+  generic AMD TDP utility, and suppress irrelevant power-profile warnings when
+  a platform-specific power backend is unavailable.
+
 ## 0.2.1 - 2026-07-12
 
 - Support the x64-only Batocera LSFG-VK layer used by x86 handhelds while

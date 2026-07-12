@@ -36,6 +36,8 @@ def _safe(label, loader, fallback, warnings):
 
 
 def _load_power(warnings):
+    if not power_supported():
+        return copy.deepcopy(_POWER_STUB), copy.deepcopy(_POWER_STUB)
     try:
         power = parse_power()
         defaults = factory_power_defaults()

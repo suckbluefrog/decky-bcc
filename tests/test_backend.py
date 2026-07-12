@@ -13,7 +13,7 @@ from unittest import mock
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_ROOT / "py_modules"))
 
-from armada_control import back_paddles, calibration, joystick_led, lsfg, paddle_actions, runtime  # noqa: E402
+from armada_control import back_paddles, calibration, joystick_led, lsfg, paddle_actions, power, runtime  # noqa: E402
 
 
 class JoystickLedTests(unittest.TestCase):
@@ -213,6 +213,39 @@ class PersistentRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "game-started")
+
+
+class PowerDetectionTests(unittest.TestCase):
+    def test_generic_amd_tool_does_not_mislabel_arm_host(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            amd_tdp = root / "batocera-amd-tdp"
+            device_tree = root / "compatible"
+            amd_tdp.touch()
+            device_tree.touch()
+            with (
+                mock.patch.object(power, "POWER_SCRIPT", root / "missing-odin-power"),
+                mock.patch.object(power, "AMD_TDP", amd_tdp),
+                mock.patch.object(power, "DEVICE_TREE_COMPAT", device_tree),
+                mock.patch.object(power, "SIMPLE_DECKY_TDP", root / "missing-plugin"),
+            ):
+                self.assertEqual(power.unsupported_reason(), "Odin power service is not installed")
+
+    def test_x86_defers_to_simple_decky_tdp(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            amd_tdp = root / "batocera-amd-tdp"
+            plugin = root / "SimpleDeckyTDP" / "plugin.json"
+            amd_tdp.touch()
+            plugin.parent.mkdir()
+            plugin.touch()
+            with (
+                mock.patch.object(power, "POWER_SCRIPT", root / "missing-odin-power"),
+                mock.patch.object(power, "AMD_TDP", amd_tdp),
+                mock.patch.object(power, "DEVICE_TREE_COMPAT", root / "missing-device-tree"),
+                mock.patch.object(power, "SIMPLE_DECKY_TDP", plugin),
+            ):
+                self.assertIn("SimpleDeckyTDP", power.unsupported_reason())
 
 
 class LsfgTests(unittest.TestCase):
