@@ -23,7 +23,8 @@ elif [ -n "${1:-}" ]; then
 fi
 
 for required in plugin.json main.py dist/index.js py_modules/armada_control/config.py \
-    py_modules/batocera-control-game-launch py_modules/fex-profiles.json PAYLOAD.sha256; do
+    py_modules/batocera-control-game-launch py_modules/batocera-control-lsfg-launch \
+    py_modules/fex-profiles.json PAYLOAD.sha256; do
     if [ ! -f "${ROOT}/${required}" ]; then
         echo "Batocera Control payload is incomplete: missing ${required}" >&2
         exit 1
@@ -61,12 +62,15 @@ cp -a "${ROOT}/main.py" "${ROOT}/plugin.json" "${ROOT}/package.json" \
     "${ROOT}/THIRD_PARTY_NOTICES.md" "$STAGE/"
 find "$STAGE" -type d -exec chmod 0755 {} +
 find "$STAGE" -type f -exec chmod 0644 {} +
-chmod 0755 "$STAGE/py_modules/batocera-control-game-launch"
+chmod 0755 "$STAGE/py_modules/batocera-control-game-launch" \
+    "$STAGE/py_modules/batocera-control-lsfg-launch"
 
 # Install this before enabling the frontend policy. It stays behind on uninstall
 # so launch options already stored by Steam always reference a valid executable.
 install -D -m 0755 "${ROOT}/py_modules/batocera-control-game-launch" \
     "${USERDATA}/system/bin/batocera-control-game-launch"
+install -D -m 0755 "${ROOT}/py_modules/batocera-control-lsfg-launch" \
+    "${USERDATA}/system/bin/batocera-control-lsfg-launch"
 install -D -m 0644 "${ROOT}/py_modules/fex-profiles.json" \
     "${USERDATA}/system/configs/batocera-control/fex-profiles.json"
 

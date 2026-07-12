@@ -14,6 +14,7 @@ printf '{"name":"legacy"}\n' > "$TEST_ROOT/system/homebrew/plugins/decky-lsfg-vk
 BATOCERA_USERDATA="$TEST_ROOT" bash "$ROOT/install.sh" --no-restart
 test -s "$TEST_ROOT/system/homebrew/plugins/armada-control/dist/index.js"
 test -x "$TEST_ROOT/system/bin/batocera-control-game-launch"
+test -x "$TEST_ROOT/system/bin/batocera-control-lsfg-launch"
 test -s "$TEST_ROOT/system/configs/batocera-control/fex-profiles.json"
 test "$(cat "$TEST_ROOT/system/homebrew/plugins/armada-control/VERSION")" = "$(cat "$ROOT/VERSION")"
 test ! -e "$TEST_ROOT/system/homebrew/plugins/decky-lsfg-vk"

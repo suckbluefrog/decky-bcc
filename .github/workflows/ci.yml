@@ -33,6 +33,8 @@ jobs:
         run: npx tsc --noEmit
       - name: Backend tests
         run: python3 -m unittest discover -s tests -v
+      - name: Launch-option tests
+        run: node tests/test-launch-options.mjs
       - name: Installer smoke test
         run: bash tests/test_installer.sh
       - name: Dependency audit

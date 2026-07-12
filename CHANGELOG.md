@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.5 - 2026-07-12
+
+- Add per-game LSFG-VK activation that preserves existing Steam launch options,
+  coexists with the FEX wrapper, and applies on the next game launch without a
+  Steam restart; retain the optional global all-games mode with clearer text.
+- Install the LSFG helper at a stable userdata path and keep it fail-open when
+  its layer, DLL, or validated app allowlist is unavailable.
+- Serialize and batch every Batocera setting write made by the plugin, repair
+  only known NUL/orphan-brightness race damage, back up corrupt input, validate
+  after writes, and restore the prior config if the system writer fails.
+- Prevent simultaneous LED, OLED-care, paddle, and LSFG writes from corrupting
+  `batocera.conf` while retaining Batocera's independent battery/status LED.
+
 ## 0.2.4 - 2026-07-12
 
 - Remove the legacy hidden rollback directory left by pre-0.2.3 installs while

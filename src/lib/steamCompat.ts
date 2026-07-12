@@ -164,6 +164,38 @@ async function resolveDetails(appid: string, attempts = 5): Promise<any> {
   return appDetails(appid);
 }
 
+const LSFG_WRAPPER_PATH = "/userdata/system/bin/batocera-control-lsfg-launch";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function updateLsfgLaunchOptions(current: string, appid: string, enabled: boolean, wrapperPath: string): string {
+  if (!/^\d+$/.test(appid) || wrapperPath !== LSFG_WRAPPER_PATH) {
+    throw new Error("The per-game LSFG launch helper is unavailable");
+  }
+  const fragment = `${wrapperPath} --appid ${appid} ${COMMAND_TOKEN}`;
+  // Remove the managed prefix independently of %command%. Another plugin may
+  // have inserted its own wrapper between ours and %command% after we saved it.
+  const staleWrapper = new RegExp(`${escapeRegExp(wrapperPath)}\\s+--appid\\s+\\d+\\s*`, "g");
+  let next = String(current || "").replace(staleWrapper, "").trim();
+  if (!enabled) return next === COMMAND_TOKEN ? "" : next;
+  if (next.includes(COMMAND_TOKEN)) return next.replace(COMMAND_TOKEN, fragment);
+  return next ? `${fragment} ${next}` : fragment;
+}
+
+export async function setLsfgLaunchOption(appid: string, enabled: boolean, wrapperPath: string): Promise<void> {
+  const steamApps = apps();
+  if (!steamApps?.SetAppLaunchOptions) throw new Error("Steam launch-option controls are unavailable");
+  const details = await resolveDetails(appid);
+  if (!details) throw new Error("Steam has not loaded this game's details yet");
+  const current = String(details.strLaunchOptions || "");
+  const next = updateLsfgLaunchOptions(current, appid, enabled, wrapperPath);
+  if (next === current) return;
+  await steamApps.SetAppLaunchOptions(Number(appid), next);
+  requestAppDetails(appid);
+}
+
 function subscribeAppDetails(appid: string): Promise<any> {
   return waitForAppDetails(appid, () => true).promise;
 }

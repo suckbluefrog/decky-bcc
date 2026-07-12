@@ -14,6 +14,7 @@ npm ci --no-audit --no-fund
 npm run build
 npx tsc --noEmit
 python3 -m unittest discover -s tests -v
+node tests/test-launch-options.mjs
 npm audit
 
 find . -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -21,7 +22,8 @@ find . -type f -name '*.pyc' -delete
 
 PAYLOAD_FILES=(
     VERSION SOURCE.json LICENSE.md THIRD_PARTY_NOTICES.md package.json plugin.json main.py
-    dist/index.js py_modules/batocera-control-game-launch py_modules/fex-profiles.json
+    dist/index.js py_modules/batocera-control-game-launch py_modules/batocera-control-lsfg-launch
+    py_modules/fex-profiles.json
 )
 while IFS= read -r file; do PAYLOAD_FILES+=("$file"); done < <(find py_modules/armada_control -type f | sort)
 sha256sum "${PAYLOAD_FILES[@]}" > PAYLOAD.sha256

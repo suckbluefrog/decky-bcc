@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from .system import atomically_write
+from .system import atomically_write, settings_set
 
 CONFIG_PATH = Path("/userdata/system/configs/odin-oled-care/settings.conf")
 STAMP_PATH = Path("/var/run/odin-oled-last-input")
@@ -148,7 +148,7 @@ def _current_brightness_pct() -> int | None:
 
 def _apply_normal_brightness(pct: int) -> None:
     pct = max(10, min(100, pct))
-    _run(["batocera-settings-set", "display.brightness", str(pct)])
+    settings_set("display.brightness", str(pct))
     _run(["batocera-brightness", str(pct)])
 
 

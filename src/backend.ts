@@ -27,3 +27,4 @@ export const saveOledCare = (data: OledCareConfig) => call<[OledCareConfig], Ole
 export const restartOledCare = () => call<[], OledCareState>("restart_oled_care");
 export const saveBackPaddles = (data: BackPaddleBindings) => call<[BackPaddleBindings], BackPaddleState>("save_back_paddles", data);
 export const saveLsfg = (data: LsfgConfig) => call<[LsfgConfig], LsfgState>("save_lsfg", data);
+export const setLsfgGameEnabled = (appid: string, enabled: boolean) => call<[string, boolean], LsfgState>("set_lsfg_game_enabled", appid, enabled);

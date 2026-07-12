@@ -144,14 +144,18 @@ export interface LsfgState {
   supported: boolean;
   reason: string;
   ready: boolean;
+  perGameSupported: boolean;
   dllDetected: boolean;
   dllPath: string;
   layers: { native: boolean; x64: boolean };
   config: LsfgConfig;
+  enabledAppids: string[];
+  wrapperPath: string;
   legacyPluginDetected: boolean;
   legacyConfigDetected: boolean;
   legacyLaunchScriptDetected: boolean;
   appliesOnNextSteamLaunch: boolean;
+  perGameAppliesOnNextGameLaunch: boolean;
 }
 
 export interface Config {

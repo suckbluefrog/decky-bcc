@@ -7,6 +7,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from .system import settings_set
+
 try:
     import evdev
     from evdev import UInput, ecodes
@@ -79,7 +81,7 @@ def _settings_get(key: str) -> str:
 
 
 def _settings_set(key: str, value: str) -> None:
-    _run(["batocera-settings-set", key, value])
+    settings_set(key, value)
 
 
 def _tap_key(code: int) -> None:

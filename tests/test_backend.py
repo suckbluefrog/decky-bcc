@@ -13,7 +13,7 @@ from unittest import mock
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_ROOT / "py_modules"))
 
-from armada_control import back_paddles, calibration, joystick_led, lsfg, paddle_actions, power, runtime  # noqa: E402
+from armada_control import back_paddles, calibration, joystick_led, lsfg, paddle_actions, power, runtime, system  # noqa: E402
 
 
 class JoystickLedTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class JoystickLedTests(unittest.TestCase):
             with (
                 mock.patch.object(joystick_led, "CONFIG_PATH", config),
                 mock.patch.object(joystick_led, "LED_SYSFS", led_root),
-                mock.patch.object(joystick_led, "_settings_set", side_effect=lambda key, value: settings.append((key, value))),
+                mock.patch.object(joystick_led, "settings_set_many", side_effect=lambda values: settings.extend(values)),
                 mock.patch.object(joystick_led, "_run", side_effect=lambda command: commands.append(command) or ""),
             ):
                 state = joystick_led.save_state(
@@ -54,6 +54,93 @@ class JoystickLedTests(unittest.TestCase):
             self.assertNotIn(("led.enabled", "0"), settings)
             self.assertFalse(any("stop" in command for command in commands))
             self.assertFalse(any("power-led" in " ".join(command) for command in commands))
+
+
+class SystemSettingsTests(unittest.TestCase):
+    def test_batches_settings_and_repairs_known_writer_race_damage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            conf = root / "batocera.conf"
+            lock = root / "settings.lock"
+            conf.write_bytes(b"display.brightness=70\n\0\0\0\0\n70\n")
+            commands = []
+
+            def command(args, **_kwargs):
+                commands.append(args)
+                data = conf.read_text(encoding="latin1").splitlines()
+                values = {}
+                order = []
+                for line in data:
+                    if not line or line.lstrip().startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    values[key] = value
+                    order.append(key)
+                pairs = args[2:]
+                for index in range(0, len(pairs), 2):
+                    key, value = pairs[index:index + 2]
+                    if key not in values:
+                        order.append(key)
+                    values[key] = value
+                conf.write_text("".join(f"{key}={values[key]}\n" for key in order), encoding="latin1")
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            with (
+                mock.patch.object(system, "BATOCERA_CONF", conf),
+                mock.patch.object(system, "SETTINGS_LOCK", lock),
+                mock.patch.object(system, "run_cmd", side_effect=command),
+            ):
+                system.settings_set_many([("led.enabled", "1"), ("led.mode", "static")])
+
+            self.assertEqual(
+                commands,
+                [[system.BATOCERA_SETTINGS_SET, "--validate", "led.enabled", "1", "led.mode", "static"]],
+            )
+            result = conf.read_bytes()
+            self.assertNotIn(b"\0", result)
+            self.assertNotIn(b"\n70\n", result)
+            self.assertIn(b"led.enabled=1\n", result)
+            self.assertEqual(len(list(root.glob("batocera.conf.corrupt-*"))), 1)
+
+    def test_refuses_unknown_invalid_lines_without_invoking_writer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            conf = root / "batocera.conf"
+            lock = root / "settings.lock"
+            original = b"valid.key=1\nthis is not config\n"
+            conf.write_bytes(original)
+            with (
+                mock.patch.object(system, "BATOCERA_CONF", conf),
+                mock.patch.object(system, "SETTINGS_LOCK", lock),
+                mock.patch.object(system, "run_cmd") as command,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "invalid non-key/value"):
+                    system.settings_set("valid.key", "2")
+            command.assert_not_called()
+            self.assertEqual(conf.read_bytes(), original)
+
+    def test_failed_writer_restores_pre_transaction_config(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            conf = root / "batocera.conf"
+            lock = root / "settings.lock"
+            original = b"display.brightness=70\nvalid.key=1\n"
+            conf.write_bytes(original)
+
+            def failed_command(args, **_kwargs):
+                conf.write_bytes(b"\0\0damaged")
+                return subprocess.CompletedProcess(args, 1, "", "writer failed")
+
+            with (
+                mock.patch.object(system, "BATOCERA_CONF", conf),
+                mock.patch.object(system, "SETTINGS_LOCK", lock),
+                mock.patch.object(system, "run_cmd", side_effect=failed_command),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "failed to persist"):
+                    system.settings_set("valid.key", "2")
+
+            self.assertEqual(conf.read_bytes(), original)
+            self.assertEqual(len(list(root.glob("batocera.conf.corrupt-*"))), 1)
 
 
 class CalibrationTests(unittest.TestCase):
@@ -255,24 +342,28 @@ class LsfgTests(unittest.TestCase):
             native_lib = root / "usr/lib/liblsfg-vk.so"
             native_layer = root / "usr/share/vulkan/explicit_layer.d/VkLayer_LS_frame_generation.json"
             dll = root / "userdata/system/wine/lossless-scaling/Lossless.dll"
+            bundled_wrapper = root / "bundled-lsfg-launch"
+            stable_wrapper = root / "userdata/system/bin/batocera-control-lsfg-launch"
+            runtime_config = root / "userdata/system/configs/batocera-control/lsfg.json"
+            runtime_env = root / "userdata/system/configs/batocera-control/lsfg.env"
             for path in (native_lib, native_layer, dll):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
+            bundled_wrapper.write_text("#!/bin/bash\n# BATOCERA_CONTROL_LSFG_LAUNCH\n", encoding="utf-8")
             store = {}
             writes = []
 
             def command(args, **_kwargs):
                 if args[0] == lsfg.SETTINGS_GET:
                     return subprocess.CompletedProcess(args, 0, store.get(args[1], ""), "")
-                if args[0] == lsfg.SETTINGS_SET:
-                    self.assertEqual(args[1], "--validate")
-                    pairs = args[2:]
-                    self.assertEqual(len(pairs) % 2, 0)
-                    writes.append(pairs)
-                    for index in range(0, len(pairs), 2):
-                        store[pairs[index]] = pairs[index + 1]
-                    return subprocess.CompletedProcess(args, 0, "", "")
                 raise AssertionError(args)
+
+            def set_many(pairs):
+                flat = []
+                for key, value in pairs:
+                    flat.extend((key, value))
+                    store[key] = value
+                writes.append(flat)
 
             with (
                 mock.patch.object(lsfg, "DEFAULT_DLL", dll),
@@ -283,8 +374,13 @@ class LsfgTests(unittest.TestCase):
                 mock.patch.object(lsfg, "LEGACY_PLUGIN", root / "missing-plugin"),
                 mock.patch.object(lsfg, "LEGACY_CONFIG", root / "missing-config"),
                 mock.patch.object(lsfg, "LEGACY_SCRIPTS", (root / "missing-script",)),
+                mock.patch.object(lsfg, "BUNDLED_WRAPPER", bundled_wrapper),
+                mock.patch.object(lsfg, "STABLE_WRAPPER", stable_wrapper),
+                mock.patch.object(lsfg, "RUNTIME_CONFIG", runtime_config),
+                mock.patch.object(lsfg, "RUNTIME_ENV", runtime_env),
                 mock.patch.object(lsfg.platform, "machine", return_value="aarch64"),
                 mock.patch.object(lsfg, "run_cmd", side_effect=command),
+                mock.patch.object(lsfg, "settings_set_many", side_effect=set_many),
             ):
                 initial = lsfg.get_state()
                 saved = lsfg.save_state(
@@ -297,6 +393,7 @@ class LsfgTests(unittest.TestCase):
                         "presentMode": "mailbox",
                     }
                 )
+                per_game = lsfg.set_game_enabled("12345", True)
 
             self.assertTrue(initial["ready"])
             self.assertEqual(initial["config"]["flowScale"], "0.75")
@@ -308,6 +405,12 @@ class LsfgTests(unittest.TestCase):
             self.assertEqual(len(writes), 1)
             self.assertEqual(writes[0][-2:], ["steam.lsfg_vk", "1"])
             self.assertTrue(saved["config"]["enabled"])
+            self.assertEqual(per_game["enabledAppids"], ["12345"])
+            self.assertTrue(per_game["perGameSupported"])
+            self.assertTrue(stable_wrapper.stat().st_mode & stat.S_IXUSR)
+            self.assertEqual(stat.S_IMODE(runtime_env.stat().st_mode), 0o644)
+            self.assertIn("BATOCERA_LSFG_ENABLED_APPIDS=12345", runtime_env.read_text(encoding="utf-8"))
+            self.assertEqual(json.loads(runtime_config.read_text(encoding="utf-8"))["enabledAppids"], ["12345"])
             self.assertNotIn("download", " ".join(store))
 
     def test_refuses_enable_without_purchased_dll(self):
@@ -315,8 +418,13 @@ class LsfgTests(unittest.TestCase):
             root = Path(temp)
             native_lib = root / "liblsfg-vk.so"
             native_layer = root / "VkLayer_LS_frame_generation.json"
+            bundled_wrapper = root / "bundled-lsfg-launch"
+            stable_wrapper = root / "stable-lsfg-launch"
+            runtime_config = root / "lsfg.json"
+            runtime_env = root / "lsfg.env"
             native_lib.touch()
             native_layer.touch()
+            bundled_wrapper.write_text("#!/bin/bash\n# BATOCERA_CONTROL_LSFG_LAUNCH\n", encoding="utf-8")
 
             def command(args, **_kwargs):
                 return subprocess.CompletedProcess(args, 0, "", "")
@@ -330,12 +438,65 @@ class LsfgTests(unittest.TestCase):
                 mock.patch.object(lsfg, "LEGACY_PLUGIN", root / "missing-plugin"),
                 mock.patch.object(lsfg, "LEGACY_CONFIG", root / "missing-config"),
                 mock.patch.object(lsfg, "LEGACY_SCRIPTS", (root / "missing-script",)),
+                mock.patch.object(lsfg, "BUNDLED_WRAPPER", bundled_wrapper),
+                mock.patch.object(lsfg, "STABLE_WRAPPER", stable_wrapper),
+                mock.patch.object(lsfg, "RUNTIME_CONFIG", runtime_config),
+                mock.patch.object(lsfg, "RUNTIME_ENV", runtime_env),
                 mock.patch.object(lsfg, "run_cmd", side_effect=command),
             ):
                 with self.assertRaisesRegex(RuntimeError, "Lossless.dll"):
                     lsfg.save_state({"enabled": True, "multiplier": "2", "flowScale": "0.75"})
                 with self.assertRaisesRegex(ValueError, "boolean"):
                     lsfg.save_state({"enabled": "true", "multiplier": "2", "flowScale": "0.75"})
+
+    def test_per_game_wrapper_activates_only_listed_appid(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            layer_root = root / "layer"
+            dll = root / "Lossless.dll"
+            layer_library = layer_root / "lib/liblsfg-vk.so"
+            layer_manifest = layer_root / "share/vulkan/explicit_layer.d/VkLayer_LS_frame_generation.json"
+            for path in (dll, layer_library, layer_manifest):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            env_file = root / "lsfg.env"
+            env_file.write_text(
+                "\n".join(
+                    (
+                        "BATOCERA_LSFG_ENABLED_APPIDS='123 456'",
+                        f"BATOCERA_LSFG_LAYER_ROOT='{layer_root}'",
+                        "BATOCERA_LSFG_PRESENT_MODE='mailbox'",
+                        f"LSFG_DLL_PATH='{dll}'",
+                        "LSFG_MULTIPLIER='2'",
+                        "LSFG_FLOW_SCALE='0.75'",
+                        "LSFG_PERFORMANCE_MODE='1'",
+                        "LSFG_HDR_MODE='0'",
+                        "",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            wrapper = PLUGIN_ROOT / "py_modules" / "batocera-control-lsfg-launch"
+            enabled = subprocess.run(
+                [str(wrapper), "--appid", "123", "/usr/bin/env"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "BATOCERA_CONTROL_LSFG_CONFIG": str(env_file)},
+            )
+            disabled = subprocess.run(
+                [str(wrapper), "--appid", "999", "/usr/bin/env"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "BATOCERA_CONTROL_LSFG_CONFIG": str(env_file)},
+            )
+
+            self.assertEqual(enabled.returncode, 0, enabled.stderr)
+            self.assertIn("ENABLE_LSFG=1", enabled.stdout)
+            self.assertNotIn("LSFG_PROCESS=", enabled.stdout)
+            self.assertIn("VK_LAYER_LS_frame_generation", enabled.stdout)
+            self.assertNotIn("ENABLE_LSFG=1", disabled.stdout)
 
 
 if __name__ == "__main__":

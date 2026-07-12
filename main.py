@@ -12,6 +12,7 @@ from armada_control.config import build_config
 from armada_control.controller import set_controller_type
 from armada_control.joystick_led import save_state as save_joystick_led
 from armada_control.lsfg import save_state as save_lsfg
+from armada_control.lsfg import set_game_enabled as set_lsfg_game_enabled
 from armada_control.oled_care import get_state as oled_care_state
 from armada_control.oled_care import restart_service as restart_oled_care
 from armada_control.oled_care import save_state as save_oled_care
@@ -81,3 +82,6 @@ class Plugin:
 
     async def save_lsfg(self, data):
         return await asyncio.to_thread(save_lsfg, data)
+
+    async def set_lsfg_game_enabled(self, appid, enabled):
+        return await asyncio.to_thread(set_lsfg_game_enabled, appid, enabled)

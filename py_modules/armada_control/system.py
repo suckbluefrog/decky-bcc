@@ -7,12 +7,20 @@ import re
 import stat
 import subprocess
 import tempfile
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
+
+import fcntl
 
 
 BATOCERA_SETTINGS_GET = "/usr/bin/batocera-settings-get"
 BATOCERA_SETTINGS_SET = "/usr/bin/batocera-settings-set"
+BATOCERA_CONF = Path("/userdata/system/batocera.conf")
+SETTINGS_LOCK = Path("/userdata/system/configs/batocera-control/settings.lock")
 DROPBEAR_INIT = Path("/etc/init.d/S50dropbear")
+_SETTINGS_THREAD_LOCK = threading.RLock()
 
 
 def read_text(path, default=""):
@@ -22,21 +30,29 @@ def read_text(path, default=""):
         return default
 
 
-def atomically_write(path, text, mode=None):
+def atomically_write_bytes(path, data, mode=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    owner = None
     if mode is None:
         try:
-            mode = stat.S_IMODE(path.stat().st_mode)
+            current = path.stat()
+            mode = stat.S_IMODE(current.st_mode)
+            owner = (current.st_uid, current.st_gid)
         except OSError:
             mode = 0o644
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         os.chmod(tmp, mode)
+        if owner is not None:
+            try:
+                os.chown(tmp, *owner)
+            except OSError:
+                pass
         os.replace(tmp, path)
         try:
             directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -51,6 +67,10 @@ def atomically_write(path, text, mode=None):
             os.unlink(tmp)
         except FileNotFoundError:
             pass
+
+
+def atomically_write(path, text, mode=None):
+    atomically_write_bytes(path, text.encode("utf-8"), mode)
 
 
 def run_cmd(cmd, timeout=5, capture=True):
@@ -70,6 +90,118 @@ def run_cmd(cmd, timeout=5, capture=True):
 def _settings_get(key: str) -> str:
     result = run_cmd([BATOCERA_SETTINGS_GET, key])
     return result.stdout.strip() if result and result.returncode == 0 else ""
+
+
+def _repairable_config(data: bytes) -> tuple[bytes, bool]:
+    """Return valid key/value text, repairing only known writer-race damage."""
+    repaired = data.replace(b"\0", b"")
+    changed = repaired != data
+    brightness = None
+    output = []
+
+    for raw_line in repaired.splitlines(keepends=True):
+        content = raw_line.rstrip(b"\r\n")
+        stripped = content.strip()
+        if not stripped or stripped.startswith(b"#"):
+            output.append(raw_line)
+            continue
+        if b"=" in stripped:
+            key, value = stripped.split(b"=", 1)
+            if key.strip() == b"display.brightness":
+                brightness = value.strip()
+            output.append(raw_line)
+            continue
+        # A concurrent brightness write has historically left a second, bare
+        # numeric line after display.brightness. It is never valid config data.
+        if brightness and stripped.isdigit() and stripped == brightness:
+            changed = True
+            continue
+        raise RuntimeError("batocera.conf contains an invalid non-key/value line")
+
+    return b"".join(output), changed
+
+
+def _backup_corrupt_config(data: bytes) -> None:
+    if not data:
+        return
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    backup = BATOCERA_CONF.with_name(
+        f"{BATOCERA_CONF.name}.corrupt-{stamp}-{os.getpid()}-{time.time_ns() % 1_000_000_000}"
+    )
+    atomically_write_bytes(backup, data, 0o600)
+
+
+@contextmanager
+def _settings_transaction():
+    """Serialize every settings write made by this plugin across its modules."""
+    with _SETTINGS_THREAD_LOCK:
+        SETTINGS_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(SETTINGS_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+
+def settings_set_many(values: list[tuple[str, str]]) -> None:
+    """Persist settings in one validated transaction and guard against races."""
+    if not values:
+        return
+    normalized = [(str(key), str(value)) for key, value in values]
+    if any(not key or "\n" in key or "\r" in key for key, _value in normalized):
+        raise ValueError("invalid Batocera setting name")
+
+    with _settings_transaction():
+        try:
+            before = BATOCERA_CONF.read_bytes()
+        except FileNotFoundError:
+            before = b""
+        except OSError as exc:
+            raise RuntimeError("failed to read batocera.conf") from exc
+
+        clean_before, repaired = _repairable_config(before)
+        if repaired:
+            _backup_corrupt_config(before)
+            atomically_write_bytes(BATOCERA_CONF, clean_before, 0o600)
+
+        command = [BATOCERA_SETTINGS_SET, "--validate"]
+        for key, value in normalized:
+            command.extend((key, value))
+        result = run_cmd(command, timeout=20)
+        if not result or result.returncode != 0:
+            try:
+                damaged = BATOCERA_CONF.read_bytes()
+            except OSError:
+                damaged = None
+            try:
+                if damaged is not None and damaged != clean_before:
+                    _backup_corrupt_config(damaged)
+                if damaged != clean_before:
+                    atomically_write_bytes(BATOCERA_CONF, clean_before, 0o600)
+            except OSError:
+                pass
+            raise RuntimeError("failed to persist Batocera settings")
+
+        try:
+            after = BATOCERA_CONF.read_bytes()
+            clean_after, post_repair = _repairable_config(after)
+        except (OSError, RuntimeError) as exc:
+            try:
+                if BATOCERA_CONF.exists():
+                    _backup_corrupt_config(BATOCERA_CONF.read_bytes())
+                atomically_write_bytes(BATOCERA_CONF, clean_before, 0o600)
+            except OSError:
+                pass
+            raise RuntimeError("batocera.conf failed post-write validation") from exc
+        if post_repair:
+            _backup_corrupt_config(after)
+            atomically_write_bytes(BATOCERA_CONF, clean_after, 0o600)
+
+
+def settings_set(key: str, value: object) -> None:
+    settings_set_many([(key, str(value))])
 
 
 def is_batocera() -> bool:
@@ -107,9 +239,7 @@ def os_version():
 
 def set_ssh_enabled(enabled):
     if is_batocera():
-        setting = run_cmd([BATOCERA_SETTINGS_SET, "system.ssh.enabled", "1" if enabled else "0"])
-        if not setting or setting.returncode != 0:
-            raise RuntimeError("failed to persist Batocera SSH setting")
+        settings_set("system.ssh.enabled", "1" if enabled else "0")
         if DROPBEAR_INIT.exists():
             action = "start" if enabled else "stop"
             result = run_cmd([str(DROPBEAR_INIT), action], timeout=30)

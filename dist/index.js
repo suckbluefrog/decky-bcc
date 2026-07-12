@@ -48,6 +48,7 @@ const saveOledCare = (data) => call("save_oled_care", data);
 const restartOledCare = () => call("restart_oled_care");
 const saveBackPaddles = (data) => call("save_back_paddles", data);
 const saveLsfg = (data) => call("save_lsfg", data);
+const setLsfgGameEnabled = (appid, enabled) => call("set_lsfg_game_enabled", appid, enabled);
 
 function useDebouncedSave(options) {
     const { config, field, snapshot, save, setConfig, onError, delay = 900 } = options;
@@ -413,6 +414,39 @@ async function resolveDetails(appid, attempts = 5) {
         await delay(250);
     }
     return appDetails(appid);
+}
+const LSFG_WRAPPER_PATH = "/userdata/system/bin/batocera-control-lsfg-launch";
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function updateLsfgLaunchOptions(current, appid, enabled, wrapperPath) {
+    if (!/^\d+$/.test(appid) || wrapperPath !== LSFG_WRAPPER_PATH) {
+        throw new Error("The per-game LSFG launch helper is unavailable");
+    }
+    const fragment = `${wrapperPath} --appid ${appid} ${COMMAND_TOKEN}`;
+    // Remove the managed prefix independently of %command%. Another plugin may
+    // have inserted its own wrapper between ours and %command% after we saved it.
+    const staleWrapper = new RegExp(`${escapeRegExp(wrapperPath)}\\s+--appid\\s+\\d+\\s*`, "g");
+    let next = String(current || "").replace(staleWrapper, "").trim();
+    if (!enabled)
+        return next === COMMAND_TOKEN ? "" : next;
+    if (next.includes(COMMAND_TOKEN))
+        return next.replace(COMMAND_TOKEN, fragment);
+    return next ? `${fragment} ${next}` : fragment;
+}
+async function setLsfgLaunchOption(appid, enabled, wrapperPath) {
+    const steamApps = apps();
+    if (!steamApps?.SetAppLaunchOptions)
+        throw new Error("Steam launch-option controls are unavailable");
+    const details = await resolveDetails(appid);
+    if (!details)
+        throw new Error("Steam has not loaded this game's details yet");
+    const current = String(details.strLaunchOptions || "");
+    const next = updateLsfgLaunchOptions(current, appid, enabled, wrapperPath);
+    if (next === current)
+        return;
+    await steamApps.SetAppLaunchOptions(Number(appid), next);
+    requestAppDetails(appid);
 }
 function subscribeAppDetails(appid) {
     return waitForAppDetails(appid, () => true).promise;
@@ -1181,7 +1215,19 @@ function Lsfg({ config, setConfig }) {
     const revision = SP_REACT.useRef(0);
     const saveChain = SP_REACT.useRef(Promise.resolve());
     const [message, setMessage] = SP_REACT.useState("");
+    const [gameBusy, setGameBusy] = SP_REACT.useState(false);
     const state = config.lsfg;
+    const games = [...(config.installedGames || [])];
+    if (config.game?.appid && !games.some((game) => game.appid === config.game?.appid)) {
+        games.push({ appid: config.game.appid, name: config.game.name });
+    }
+    games.sort((a, b) => a.name.localeCompare(b.name));
+    const [selectedAppid, setSelectedAppid] = SP_REACT.useState(config.game?.appid || games[0]?.appid || "");
+    SP_REACT.useEffect(() => {
+        if (selectedAppid && games.some((game) => game.appid === selectedAppid))
+            return;
+        setSelectedAppid(config.game?.appid || games[0]?.appid || "");
+    }, [config.game?.appid, games.map((game) => game.appid).join(","), selectedAppid]);
     if (!state?.supported) {
         return (SP_JSX.jsx(DFL.PanelSection, { title: "LSFG-VK frame generation", children: SP_JSX.jsx(DFL.Field, { label: "System layer unavailable", description: state?.reason || "LSFG-VK is not installed in this image." }) }));
     }
@@ -1202,7 +1248,9 @@ function Lsfg({ config, setConfig }) {
                 const saved = await saveLsfg(next);
                 if (request === revision.current) {
                     setConfig((current) => (current ? { ...current, lsfg: saved } : current));
-                    setMessage("Saved — applies after Steam/GamepadUI is relaunched.");
+                    setMessage(next.enabled
+                        ? "Saved — all-games mode applies after Steam/GamepadUI is relaunched."
+                        : "Saved — selected-game profiles use these settings on their next launch.");
                 }
             }
             catch (error) {
@@ -1211,7 +1259,38 @@ function Lsfg({ config, setConfig }) {
             }
         });
     };
-    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "LSFG-VK frame generation", children: [SP_JSX.jsx(DFL.Field, { label: "Batocera system layer", description: `${layerStatus || "detected"}; no separate LSFG runtime is downloaded by this plugin.` }), SP_JSX.jsx(DFL.Field, { label: state.dllDetected ? "Lossless.dll detected" : "Lossless.dll missing", description: state.dllPath }), SP_JSX.jsx(ToggleRow, { label: "Enable for Steam games", description: "Injects Batocera's LSFG-VK Vulkan layer into Steam-launched Vulkan/DXVK games on the next Steam launch.", value: settings.enabled, disabled: !state.ready, onChange: (enabled) => apply({ enabled }) }), !state.dllDetected ? (SP_JSX.jsx(DFL.Field, { label: "Required file", description: "Copy Lossless.dll from a purchased Lossless Scaling installation to the path shown above." })) : null] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Frame generation", children: [SP_JSX.jsx(DFL.Field, { label: "Frame multiplier", description: "2x has the lowest GPU cost; 3x/4x synthesize more frames and require more headroom." }), SP_JSX.jsx(SelectEdit, { label: "Multiplier", value: settings.multiplier, options: MULTIPLIERS, onChange: (multiplier) => apply({ multiplier }) }), SP_JSX.jsx(DFL.Field, { label: "Optical-flow resolution", description: "Lower values reduce motion-estimation cost at the expense of generated-frame detail." }), SP_JSX.jsx(SelectEdit, { label: "Flow scale", value: settings.flowScale, options: FLOW_SCALES, onChange: (flowScale) => apply({ flowScale }) }), SP_JSX.jsx(ToggleRow, { label: "Performance mode", description: "Uses the lighter LSFG model. Recommended on SM8550/SM8750 when games are GPU-bound.", value: settings.performanceMode, onChange: (performanceMode) => apply({ performanceMode }) }), SP_JSX.jsx(ToggleRow, { label: "HDR mode", description: "Enable only when both the game and display session are using HDR.", value: settings.hdrMode, onChange: (hdrMode) => apply({ hdrMode }) }), SP_JSX.jsx(DFL.Field, { label: "Present mode", description: "Automatic is safest. FIFO favors tear-free output; Mailbox/Immediate may reduce latency but can stutter or tear." }), SP_JSX.jsx(SelectEdit, { label: "Vulkan present mode", value: settings.presentMode, options: PRESENT_MODES, onChange: (presentMode) => apply({ presentMode }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Activation", children: [SP_JSX.jsx(DFL.Field, { label: "Restart required", description: message || "Changes apply the next time Steam/GamepadUI starts; currently running games keep the old environment." }), state.legacyPluginDetected || state.legacyConfigDetected || state.legacyLaunchScriptDetected ? (SP_JSX.jsx(DFL.Field, { label: "Legacy LSFG setup detected", description: "The old Decky plugin/wrapper is retained for rollback. Remove ~/lsfg from per-game Steam launch options before enabling Batocera's global layer to avoid double injection." })) : null, SP_JSX.jsx(DFL.Field, { label: "Upstream", description: "System layer: PancakeTAS/lsfg-vk. UI integration derived from Decky LSFG-VK concepts." })] })] }));
+    const setGameEnabled = async (enabled) => {
+        if (!selectedAppid || !state)
+            return;
+        const previous = state.enabledAppids.includes(selectedAppid);
+        if (enabled === previous)
+            return;
+        setGameBusy(true);
+        setMessage("Updating Steam launch options…");
+        try {
+            const saved = await setLsfgGameEnabled(selectedAppid, enabled);
+            try {
+                await setLsfgLaunchOption(selectedAppid, enabled, saved.wrapperPath);
+            }
+            catch (error) {
+                await setLsfgGameEnabled(selectedAppid, previous).catch(() => { });
+                throw error;
+            }
+            setConfig((current) => (current ? { ...current, lsfg: saved } : current));
+            setMessage(enabled
+                ? "Enabled for this game — applies on its next launch; Steam does not need to restart."
+                : "Disabled for this game and removed from its Steam launch options.");
+        }
+        catch (error) {
+            setMessage(String(error));
+        }
+        finally {
+            setGameBusy(false);
+        }
+    };
+    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "LSFG-VK frame generation", children: [SP_JSX.jsx(DFL.Field, { label: "Batocera system layer", description: `${layerStatus || "detected"}; no separate LSFG runtime is downloaded by this plugin.` }), SP_JSX.jsx(DFL.Field, { label: state.dllDetected ? "Lossless.dll detected" : "Lossless.dll missing", description: state.dllPath }), SP_JSX.jsx(ToggleRow, { label: "Enable for all Steam games", description: "Global mode injects the layer into every Steam Vulkan/DXVK game after Steam is restarted. Leave this off to use the per-game selector below.", value: settings.enabled, disabled: !state.ready, onChange: (enabled) => apply({ enabled }) }), !state.dllDetected ? (SP_JSX.jsx(DFL.Field, { label: "Required file", description: "Copy Lossless.dll from a purchased Lossless Scaling installation to the path shown above." })) : null] }), SP_JSX.jsx(DFL.PanelSection, { title: "Per-game activation", children: games.length ? (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SelectEdit, { label: "Steam game", value: selectedAppid, options: games.map((game) => ({ data: game.appid, label: game.name })), onChange: (appid) => setSelectedAppid(String(appid)) }), SP_JSX.jsx(ToggleRow, { label: "Enable for selected game", description: settings.enabled
+                                ? "Global all-games mode is currently on, so this game already receives LSFG. This switch still controls its persistent per-game launch option."
+                                : "Adds a managed wrapper only to this game's Steam launch options. Other games remain untouched, and Steam itself does not need to restart.", value: !!selectedAppid && state.enabledAppids.includes(selectedAppid), disabled: gameBusy || !state.ready || !state.perGameSupported || !selectedAppid, onChange: setGameEnabled })] })) : (SP_JSX.jsx(DFL.Field, { label: "No installed Steam games found", description: "Install or launch a game, then reopen this tab." })) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Frame generation", children: [SP_JSX.jsx(DFL.Field, { label: "Frame multiplier", description: "2x has the lowest GPU cost; 3x/4x synthesize more frames and require more headroom." }), SP_JSX.jsx(SelectEdit, { label: "Multiplier", value: settings.multiplier, options: MULTIPLIERS, onChange: (multiplier) => apply({ multiplier }) }), SP_JSX.jsx(DFL.Field, { label: "Optical-flow resolution", description: "Lower values reduce motion-estimation cost at the expense of generated-frame detail." }), SP_JSX.jsx(SelectEdit, { label: "Flow scale", value: settings.flowScale, options: FLOW_SCALES, onChange: (flowScale) => apply({ flowScale }) }), SP_JSX.jsx(ToggleRow, { label: "Performance mode", description: "Uses the lighter LSFG model. Recommended on SM8550/SM8750 when games are GPU-bound.", value: settings.performanceMode, onChange: (performanceMode) => apply({ performanceMode }) }), SP_JSX.jsx(ToggleRow, { label: "HDR mode", description: "Enable only when both the game and display session are using HDR.", value: settings.hdrMode, onChange: (hdrMode) => apply({ hdrMode }) }), SP_JSX.jsx(DFL.Field, { label: "Present mode", description: "Automatic is safest. FIFO favors tear-free output; Mailbox/Immediate may reduce latency but can stutter or tear." }), SP_JSX.jsx(SelectEdit, { label: "Vulkan present mode", value: settings.presentMode, options: PRESENT_MODES, onChange: (presentMode) => apply({ presentMode }) })] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Activation", children: [SP_JSX.jsx(DFL.Field, { label: "Status", description: message || "Per-game activation applies on the next game launch. Only global all-games mode requires a Steam/GamepadUI restart." }), state.legacyPluginDetected || state.legacyConfigDetected || state.legacyLaunchScriptDetected ? (SP_JSX.jsx(DFL.Field, { label: "Legacy LSFG setup detected", description: "The old Decky plugin/wrapper is retained for rollback. Remove ~/lsfg from per-game Steam launch options before enabling Batocera's global layer to avoid double injection." })) : null, SP_JSX.jsx(DFL.Field, { label: "Upstream", description: "System layer: PancakeTAS/lsfg-vk. UI integration derived from Decky LSFG-VK concepts." })] })] }));
 }
 
 function formatMinutes(seconds) {

@@ -13,7 +13,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from .system import atomically_write
+from .system import atomically_write, settings_set_many
 
 CONFIG_PATH = Path("/userdata/system/configs/batocera-control/joystick-led.json")
 LED_SYSFS = Path("/sys/class/leds")
@@ -72,10 +72,6 @@ def _run(cmd: list[str]) -> str:
 def _settings_get(key: str) -> str | None:
     value = _run(["batocera-settings-get", key])
     return value if value else None
-
-
-def _settings_set(key: str, value: str) -> None:
-    _run(["batocera-settings-set", key, value])
 
 
 def _hex_to_rgb_dec(hex_color: str) -> tuple[int, int, int]:
@@ -184,7 +180,6 @@ def _save_config(data: dict) -> dict:
 
 
 def _ensure_daemon() -> None:
-    _settings_set("system.led-handheld", "1")
     if Path("/var/run/led-handheld.pid").exists():
         return
     init = Path("/etc/init.d/S51led-handheld")
@@ -194,16 +189,18 @@ def _ensure_daemon() -> None:
 
 def _apply_native(side: dict) -> None:
     mode = str(side.get("mode", "solid"))
-    _settings_set("system.led-handheld", "1")
-    _ensure_daemon()
-    _run(["batocera-led-handheld", "unblock_color_changes"])
 
     if mode == "off":
         # Keep led.enabled and the native daemon alive: they own the independent
         # battery/status LED. A black static colour blanks only accent/ring LEDs.
-        _settings_set("led.enabled", "1")
-        _settings_set("led.colour", "0 0 0")
-        _settings_set("led.mode", "static")
+        settings_set_many([
+            ("system.led-handheld", "1"),
+            ("led.enabled", "1"),
+            ("led.colour", "0 0 0"),
+            ("led.mode", "static"),
+        ])
+        _ensure_daemon()
+        _run(["batocera-led-handheld", "unblock_color_changes"])
         _run(["batocera-led-handheld", "set_color", "ESCOLOR"])
         return
 
@@ -211,10 +208,15 @@ def _apply_native(side: dict) -> None:
     brightness = max(1, min(100, int(side.get("brightness", DEFAULT_BRIGHTNESS))))
     native = NATIVE_MODE.get(mode, "static")
 
-    _settings_set("led.enabled", "1")
-    _settings_set("led.colour", f"{r} {g} {b}")
-    _settings_set("led.brightness", str(brightness))
-    _settings_set("led.mode", native)
+    settings_set_many([
+        ("system.led-handheld", "1"),
+        ("led.enabled", "1"),
+        ("led.colour", f"{r} {g} {b}"),
+        ("led.brightness", str(brightness)),
+        ("led.mode", native),
+    ])
+    _ensure_daemon()
+    _run(["batocera-led-handheld", "unblock_color_changes"])
 
     if native == "static":
         _run(["batocera-led-handheld", "set_color", "ESCOLOR"])

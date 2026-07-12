@@ -1,8 +1,9 @@
 import { Field, PanelSection } from "@decky/ui";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { saveLsfg } from "../backend";
+import { saveLsfg, setLsfgGameEnabled } from "../backend";
 import { SelectEdit, ToggleRow } from "../components/widgets";
+import { setLsfgLaunchOption } from "../lib/steamCompat";
 import type { Config, LsfgConfig } from "../types";
 
 const MULTIPLIERS = [
@@ -32,7 +33,18 @@ export function Lsfg({ config, setConfig }: {
   const revision = useRef(0);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
   const [message, setMessage] = useState("");
+  const [gameBusy, setGameBusy] = useState(false);
   const state = config.lsfg;
+  const games = [...(config.installedGames || [])];
+  if (config.game?.appid && !games.some((game) => game.appid === config.game?.appid)) {
+    games.push({ appid: config.game.appid, name: config.game.name });
+  }
+  games.sort((a, b) => a.name.localeCompare(b.name));
+  const [selectedAppid, setSelectedAppid] = useState(config.game?.appid || games[0]?.appid || "");
+  useEffect(() => {
+    if (selectedAppid && games.some((game) => game.appid === selectedAppid)) return;
+    setSelectedAppid(config.game?.appid || games[0]?.appid || "");
+  }, [config.game?.appid, games.map((game) => game.appid).join(","), selectedAppid]);
 
   if (!state?.supported) {
     return (
@@ -60,12 +72,39 @@ export function Lsfg({ config, setConfig }: {
         const saved = await saveLsfg(next);
         if (request === revision.current) {
           setConfig((current) => (current ? { ...current, lsfg: saved } : current));
-          setMessage("Saved — applies after Steam/GamepadUI is relaunched.");
+          setMessage(next.enabled
+            ? "Saved — all-games mode applies after Steam/GamepadUI is relaunched."
+            : "Saved — selected-game profiles use these settings on their next launch.");
         }
       } catch (error) {
         if (request === revision.current) setMessage(String(error));
       }
     });
+  };
+
+  const setGameEnabled = async (enabled: boolean) => {
+    if (!selectedAppid || !state) return;
+    const previous = state.enabledAppids.includes(selectedAppid);
+    if (enabled === previous) return;
+    setGameBusy(true);
+    setMessage("Updating Steam launch options…");
+    try {
+      const saved = await setLsfgGameEnabled(selectedAppid, enabled);
+      try {
+        await setLsfgLaunchOption(selectedAppid, enabled, saved.wrapperPath);
+      } catch (error) {
+        await setLsfgGameEnabled(selectedAppid, previous).catch(() => {});
+        throw error;
+      }
+      setConfig((current) => (current ? { ...current, lsfg: saved } : current));
+      setMessage(enabled
+        ? "Enabled for this game — applies on its next launch; Steam does not need to restart."
+        : "Disabled for this game and removed from its Steam launch options.");
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setGameBusy(false);
+    }
   };
 
   return (
@@ -80,8 +119,8 @@ export function Lsfg({ config, setConfig }: {
           description={state.dllPath}
         />
         <ToggleRow
-          label="Enable for Steam games"
-          description="Injects Batocera's LSFG-VK Vulkan layer into Steam-launched Vulkan/DXVK games on the next Steam launch."
+          label="Enable for all Steam games"
+          description="Global mode injects the layer into every Steam Vulkan/DXVK game after Steam is restarted. Leave this off to use the per-game selector below."
           value={settings.enabled}
           disabled={!state.ready}
           onChange={(enabled) => apply({ enabled })}
@@ -89,6 +128,30 @@ export function Lsfg({ config, setConfig }: {
         {!state.dllDetected ? (
           <Field label="Required file" description="Copy Lossless.dll from a purchased Lossless Scaling installation to the path shown above." />
         ) : null}
+      </PanelSection>
+
+      <PanelSection title="Per-game activation">
+        {games.length ? (
+          <>
+            <SelectEdit
+              label="Steam game"
+              value={selectedAppid}
+              options={games.map((game) => ({ data: game.appid, label: game.name }))}
+              onChange={(appid) => setSelectedAppid(String(appid))}
+            />
+            <ToggleRow
+              label="Enable for selected game"
+              description={settings.enabled
+                ? "Global all-games mode is currently on, so this game already receives LSFG. This switch still controls its persistent per-game launch option."
+                : "Adds a managed wrapper only to this game's Steam launch options. Other games remain untouched, and Steam itself does not need to restart."}
+              value={!!selectedAppid && state.enabledAppids.includes(selectedAppid)}
+              disabled={gameBusy || !state.ready || !state.perGameSupported || !selectedAppid}
+              onChange={setGameEnabled}
+            />
+          </>
+        ) : (
+          <Field label="No installed Steam games found" description="Install or launch a game, then reopen this tab." />
+        )}
       </PanelSection>
 
       <PanelSection title="Frame generation">
@@ -113,7 +176,7 @@ export function Lsfg({ config, setConfig }: {
       </PanelSection>
 
       <PanelSection title="Activation">
-        <Field label="Restart required" description={message || "Changes apply the next time Steam/GamepadUI starts; currently running games keep the old environment."} />
+        <Field label="Status" description={message || "Per-game activation applies on the next game launch. Only global all-games mode requires a Steam/GamepadUI restart."} />
         {state.legacyPluginDetected || state.legacyConfigDetected || state.legacyLaunchScriptDetected ? (
           <Field
             label="Legacy LSFG setup detected"

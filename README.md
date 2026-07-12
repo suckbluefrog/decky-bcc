@@ -12,7 +12,7 @@ non-reproducible when upstream interfaces changed. It also allowed the plugin
 to overwrite the battery LED policy and inject a Steam launch helper that did
 not exist on Batocera.
 
-Version 0.2.4 is pinned to the provenance recorded in `SOURCE.json`. It keeps
+Version 0.2.5 is pinned to the provenance recorded in `SOURCE.json`. It keeps
 the system-owned status LED separate from the joystick rings and uses native
 Batocera services for SSH and RSInput calibration.
 
@@ -46,12 +46,14 @@ image and requires the purchased DLL at:
 /userdata/system/wine/lossless-scaling/Lossless.dll
 ```
 
-It does not download or bundle LSFG-VK or Lossless Scaling. Changes apply on
-the next Steam/GamepadUI launch. The installer moves an old standalone
-`decky-lsfg-vk` plugin to `homebrew/disabled-plugins` so only one control tab is
-loaded, while retaining its config and `~/lsfg` script for rollback. Remove the
-old `~/lsfg` prefix from per-game Steam launch options before enabling the
-global Batocera layer.
+It does not download or bundle LSFG-VK or Lossless Scaling. Global all-games
+mode applies after Steam/GamepadUI restarts. Per-game mode adds a managed,
+persistent wrapper only to the selected game's Steam launch options and takes
+effect on its next game launch without restarting Steam. The installer moves
+an old standalone `decky-lsfg-vk` plugin to `homebrew/disabled-plugins` so only
+one control tab is loaded, while retaining its config and `~/lsfg` script for
+rollback. Remove the old `~/lsfg` prefix from per-game Steam launch options
+before using either Batocera activation mode.
 
 On x86 handhelds, the x64/Wine layer is sufficient. Compatibility-tool,
 resolution, LED, and LSFG controls remain available, while the ARM-only FEX
@@ -96,9 +98,9 @@ feature-detect the services and sysfs interfaces provided by each image.
 
 Plugin settings live under `/userdata/system/configs/batocera-control` (OLED
 care retains its existing dedicated config directory). `uninstall.sh` removes
-the Decky plugin but keeps settings and the fail-open launch helper. This is
-deliberate: removing a helper still referenced by Steam launch options would
-make games fail to start.
+the Decky plugin but keeps settings and both fail-open game/LSFG launch helpers.
+This is deliberate: removing a helper still referenced by Steam launch options
+would make games fail to start.
 
 ## License and provenance
 
