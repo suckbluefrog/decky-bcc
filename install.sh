@@ -7,7 +7,8 @@ USERDATA="${BATOCERA_USERDATA:-/userdata}"
 TARGET_PARENT="${USERDATA}/system/homebrew/plugins"
 TARGET="${TARGET_PARENT}/armada-control"
 STAGE="${TARGET_PARENT}/.armada-control.new.$$"
-BACKUP="${TARGET_PARENT}/.armada-control.previous"
+DISABLED_PARENT="${USERDATA}/system/homebrew/disabled-plugins"
+BACKUP="${DISABLED_PARENT}/armada-control-previous"
 LOCK="/var/lock/batocera-control-install.lock"
 LOG="${USERDATA}/system/logs/batocera-control-install.log"
 PLUGIN_LOADER="${USERDATA}/system/homebrew/services/PluginLoader"
@@ -33,7 +34,7 @@ if [ ! -x "$PLUGIN_LOADER" ]; then
     exit 1
 fi
 
-mkdir -p "$(dirname "$LOCK")" "$(dirname "$LOG")" "$TARGET_PARENT"
+mkdir -p "$(dirname "$LOCK")" "$(dirname "$LOG")" "$TARGET_PARENT" "$DISABLED_PARENT"
 if ! mkdir "$LOCK" 2>/dev/null; then
     echo "Another Batocera Control install is already running" >&2
     exit 1
@@ -84,7 +85,7 @@ fi
 echo "Installed Batocera Control $(cat "${TARGET}/VERSION")"
 
 LEGACY_LSFG="${TARGET_PARENT}/decky-lsfg-vk"
-DISABLED_LSFG="${USERDATA}/system/homebrew/disabled-plugins/decky-lsfg-vk-merged"
+DISABLED_LSFG="${DISABLED_PARENT}/decky-lsfg-vk-merged"
 if [ -e "$LEGACY_LSFG" ]; then
     mkdir -p "$(dirname "$DISABLED_LSFG")"
     rm -rf "$DISABLED_LSFG"

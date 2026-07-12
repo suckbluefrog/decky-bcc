@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 - 2026-07-12
+
+- Keep the previous plugin version in `homebrew/disabled-plugins` instead of a
+  hidden directory under Decky's active plugin path, preventing any chance of
+  the rollback copy being loaded as a second plugin.
+
 ## 0.2.2 - 2026-07-12
 
 - Distinguish an x86 AMD handheld from ARM images that happen to include the

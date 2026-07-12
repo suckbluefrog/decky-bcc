@@ -12,7 +12,7 @@ non-reproducible when upstream interfaces changed. It also allowed the plugin
 to overwrite the battery LED policy and inject a Steam launch helper that did
 not exist on Batocera.
 
-Version 0.2.2 is pinned to the provenance recorded in `SOURCE.json`. It keeps
+Version 0.2.3 is pinned to the provenance recorded in `SOURCE.json`. It keeps
 the system-owned status LED separate from the joystick rings and uses native
 Batocera services for SSH and RSInput calibration.
 

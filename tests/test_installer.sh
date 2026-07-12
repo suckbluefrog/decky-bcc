@@ -21,6 +21,7 @@ test -f "$TEST_ROOT/system/homebrew/disabled-plugins/decky-lsfg-vk-merged/plugin
 
 # A second install exercises atomic replacement and the previous-version backup.
 BATOCERA_USERDATA="$TEST_ROOT" bash "$ROOT/install.sh" --no-restart
-test -d "$TEST_ROOT/system/homebrew/plugins/.armada-control.previous"
+test ! -e "$TEST_ROOT/system/homebrew/plugins/.armada-control.previous"
+test -d "$TEST_ROOT/system/homebrew/disabled-plugins/armada-control-previous"
 
 echo "Installer smoke test passed"
