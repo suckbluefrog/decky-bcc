@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4 - 2026-07-12
+
+- Remove the legacy hidden rollback directory left by pre-0.2.3 installs while
+  preserving the current previous-version backup outside Decky's active path.
+
 ## 0.2.3 - 2026-07-12
 
 - Keep the previous plugin version in `homebrew/disabled-plugins` instead of a

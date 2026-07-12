@@ -9,6 +9,7 @@ TARGET="${TARGET_PARENT}/armada-control"
 STAGE="${TARGET_PARENT}/.armada-control.new.$$"
 DISABLED_PARENT="${USERDATA}/system/homebrew/disabled-plugins"
 BACKUP="${DISABLED_PARENT}/armada-control-previous"
+LEGACY_BACKUP="${TARGET_PARENT}/.armada-control.previous"
 LOCK="/var/lock/batocera-control-install.lock"
 LOG="${USERDATA}/system/logs/batocera-control-install.log"
 PLUGIN_LOADER="${USERDATA}/system/homebrew/services/PluginLoader"
@@ -69,7 +70,7 @@ install -D -m 0755 "${ROOT}/py_modules/batocera-control-game-launch" \
 install -D -m 0644 "${ROOT}/py_modules/fex-profiles.json" \
     "${USERDATA}/system/configs/batocera-control/fex-profiles.json"
 
-rm -rf "$BACKUP"
+rm -rf "$BACKUP" "$LEGACY_BACKUP"
 if [ -e "$TARGET" ]; then
     mv "$TARGET" "$BACKUP"
 fi
