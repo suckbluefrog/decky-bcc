@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.10 - 2026-07-14
+
+- Leave every rear-paddle tap and chord unassigned on fresh installs instead
+  of silently launching the host Batocera Control Center or toggling MangoHud.
+- Migrate the exact unversioned 0.2.8/0.2.9 default preset to the safe,
+  unassigned configuration without overwriting versioned user choices.
+- Label the optional Control Center action as the Batocera host app so it is
+  not confused with this Decky plugin.
+
 ## 0.2.9 - 2026-07-14
 
 - Add Batocera's native thermal/adaptive CPU limiter to the Power tab, with

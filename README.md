@@ -25,9 +25,10 @@ native listener uses python-evdev, observes without grabbing, and reconnects
 if the controller is recreated after resume. It therefore coexists with Steam,
 ES, emulators, and Batocera's in-game Hotkey+paddle mappings. Older images with
 the legacy `odin_backpaddles` GPIO service remain supported as a fallback.
-M2 has no action on a fresh install; mouse mode remains opt-in because it
-temporarily replaces normal gamepad navigation until the paddle is pressed
-again.
+Every tap and chord is unassigned on a fresh install. Actions are opt-in, and
+the host Control Center option is labeled explicitly so it is not confused
+with this Decky panel. Mouse mode temporarily replaces normal gamepad
+navigation until its assigned paddle is pressed again.
 
 ## Install on Batocera
 

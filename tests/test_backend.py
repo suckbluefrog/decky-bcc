@@ -192,8 +192,11 @@ class CalibrationTests(unittest.TestCase):
 
 class BackPaddleTests(unittest.TestCase):
     def test_fresh_defaults_do_not_take_over_gamepad_navigation(self):
-        self.assertEqual(paddle_actions.DEFAULT_BINDINGS["m2"], "none")
-        self.assertNotIn("mouse_toggle", paddle_actions.DEFAULT_BINDINGS.values())
+        self.assertEqual(set(paddle_actions.DEFAULT_BINDINGS.values()), {"none"})
+        self.assertIn(
+            ("control_center", "Batocera Control Center (host app)"),
+            paddle_actions.ACTIONS,
+        )
 
     def test_unversioned_unsafe_defaults_migrate_to_safe_m2_binding(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -206,6 +209,36 @@ class BackPaddleTests(unittest.TestCase):
                 bindings = back_paddles.load_bindings()
 
         self.assertEqual(bindings["m2"], "none")
+
+    def test_unversioned_active_defaults_migrate_to_unassigned_paddles(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "back-paddles.json"
+            config.write_text(
+                json.dumps({"bindings": back_paddles.LEGACY_UNVERSIONED_ACTIVE_DEFAULT_BINDINGS}),
+                encoding="utf-8",
+            )
+            with mock.patch.object(back_paddles, "CONFIG_PATH", config):
+                bindings = back_paddles.load_bindings()
+
+        self.assertEqual(set(bindings.values()), {"none"})
+
+    def test_versioned_active_bindings_are_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "back-paddles.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "version": back_paddles.CONFIG_VERSION,
+                        "bindings": back_paddles.LEGACY_UNVERSIONED_ACTIVE_DEFAULT_BINDINGS,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(back_paddles, "CONFIG_PATH", config):
+                bindings = back_paddles.load_bindings()
+
+        self.assertEqual(bindings["m1"], "control_center")
+        self.assertEqual(bindings["m1_m2"], "mangohud_toggle")
 
     def test_rejects_unknown_actions_and_writes_atomically(self):
         with tempfile.TemporaryDirectory() as temp:

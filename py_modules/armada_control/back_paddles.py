@@ -51,6 +51,18 @@ LEGACY_UNSAFE_DEFAULT_BINDINGS = {
     "select_m2": "none",
     "home_m2": "none",
 }
+# 0.2.8/0.2.9 still assigned two surprising host actions on a fresh install.
+# Migrate only the exact unversioned preset; versioned files may represent an
+# intentional user choice and must be preserved.
+LEGACY_UNVERSIONED_ACTIVE_DEFAULT_BINDINGS = {
+    "m1": "control_center",
+    "m2": "none",
+    "m1_m2": "mangohud_toggle",
+    "m1_start": "none",
+    "m1_back": "none",
+    "select_m2": "none",
+    "home_m2": "none",
+}
 SLOTS = [
     ("m1", "M1 / left paddle (tap)"),
     ("m2", "M2 / right paddle (tap)"),
@@ -99,6 +111,14 @@ def _payload_version(data: object) -> int:
         return 0
 
 
+def _migrate_unversioned_defaults(payload: object, bindings: dict) -> dict:
+    if _payload_version(payload) != 0:
+        return bindings
+    if bindings in (LEGACY_UNSAFE_DEFAULT_BINDINGS, LEGACY_UNVERSIONED_ACTIVE_DEFAULT_BINDINGS):
+        return dict(DEFAULT_BINDINGS)
+    return bindings
+
+
 def load_bindings() -> dict:
     if not CONFIG_PATH.exists():
         return dict(DEFAULT_BINDINGS)
@@ -107,9 +127,7 @@ def load_bindings() -> dict:
     except (OSError, json.JSONDecodeError):
         return dict(DEFAULT_BINDINGS)
     bindings = _normalize(_extract_bindings(payload))
-    if _payload_version(payload) < CONFIG_VERSION and bindings == LEGACY_UNSAFE_DEFAULT_BINDINGS:
-        return dict(DEFAULT_BINDINGS)
-    return bindings
+    return _migrate_unversioned_defaults(payload, bindings)
 
 
 def _event_sort_key(path: Path) -> tuple[int, str]:
@@ -268,8 +286,7 @@ def get_state() -> dict:
         try:
             payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             bindings = _normalize(_extract_bindings(payload))
-            if _payload_version(payload) < CONFIG_VERSION and bindings == LEGACY_UNSAFE_DEFAULT_BINDINGS:
-                bindings = dict(DEFAULT_BINDINGS)
+            bindings = _migrate_unversioned_defaults(payload, bindings)
         except (OSError, json.JSONDecodeError):
             bindings = dict(DEFAULT_BINDINGS)
             warning = "Bindings file is malformed; defaults are shown"

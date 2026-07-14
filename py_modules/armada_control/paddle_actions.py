@@ -22,7 +22,7 @@ FAN_MODE_STATE = Path("/var/run/odin-fan-mode-state")
 
 ACTIONS = [
     ("none", "None"),
-    ("control_center", "Control Center"),
+    ("control_center", "Batocera Control Center (host app)"),
     ("mouse_toggle", "Toggle mouse mode (pauses gamepad navigation)"),
     ("mouse_left", "Left click"),
     ("mouse_right", "Right click"),
@@ -58,9 +58,9 @@ ACTIONS = [
 ]
 
 DEFAULT_BINDINGS = {
-    "m1": "control_center",
+    "m1": "none",
     "m2": "none",
-    "m1_m2": "mangohud_toggle",
+    "m1_m2": "none",
     "m1_start": "none",
     "m1_back": "none",
     "select_m2": "none",
