@@ -18,6 +18,29 @@ from armada_control import back_paddles, calibration, cpu_limit, fan_control, jo
 
 
 class JoystickLedTests(unittest.TestCase):
+    def test_named_color_presets_write_exact_rgb_channels(self):
+        expected = {
+            "red": (255, 0, 0),
+            "green": (0, 255, 0),
+            "blue": (0, 0, 255),
+            "cyan": (0, 255, 255),
+            "magenta": (255, 0, 255),
+            "yellow": (255, 255, 0),
+            "orange": (255, 128, 0),
+            "purple": (128, 0, 255),
+            "white": (255, 255, 255),
+        }
+        self.assertEqual(
+            {name: joystick_led._hex_to_rgb_dec(value) for name, value in joystick_led.COLOR_PRESETS.items()},
+            expected,
+        )
+
+    def test_softened_legacy_preset_is_normalized_without_altering_custom_colors(self):
+        legacy = joystick_led._normalize_side({"mode": "solid", "color": "#ff2020", "brightness": 70})
+        custom = joystick_led._normalize_side({"mode": "solid", "color": "#123456", "brightness": 70})
+        self.assertEqual(legacy["color"], "#ff0000")
+        self.assertEqual(custom["color"], "#123456")
+
     def test_off_blanks_accents_without_disabling_status_service(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.11 - 2026-07-14
+
+- Make every named joystick-ring color an exact RGB preset, so red writes
+  `255 0 0` instead of the pink-tinted `255 32 32`, and migrate only the old
+  softened preset values while preserving user-defined colors.
+
 ## 0.2.10 - 2026-07-14
 
 - Leave every rear-paddle tap and chord unassigned on fresh installs instead

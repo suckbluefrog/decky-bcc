@@ -1,6 +1,6 @@
 {
   "name": "Batocera Control",
-  "version": "0.2.9",
+  "version": "0.2.11",
   "maintainer": "suckbluefrog <suckbluefrog@proton.me>",
   "upstream": {
     "repository": "https://github.com/virtudude/armada",

@@ -40,19 +40,34 @@ UI_FROM_NATIVE = {
 }
 
 COLOR_PRESETS = {
-    "red": "#ff2020",
-    "green": "#20ff40",
-    "blue": "#2080ff",
-    "cyan": "#20ffff",
-    "magenta": "#ff40ff",
-    "yellow": "#ffff40",
-    "orange": "#ff9020",
-    "purple": "#a040ff",
+    "red": "#ff0000",
+    "green": "#00ff00",
+    "blue": "#0000ff",
+    "cyan": "#00ffff",
+    "magenta": "#ff00ff",
+    "yellow": "#ffff00",
+    "orange": "#ff8000",
+    "purple": "#8000ff",
     "white": "#ffffff",
 }
 
+# Releases through 0.2.10 deliberately softened the named colors. Besides
+# making red look pink, those values meant a preset name did not describe the
+# RGB tuple written to Batocera. Normalize only those exact legacy values so
+# custom colors remain untouched.
+LEGACY_COLOR_PRESETS = {
+    "#ff2020": COLOR_PRESETS["red"],
+    "#20ff40": COLOR_PRESETS["green"],
+    "#2080ff": COLOR_PRESETS["blue"],
+    "#20ffff": COLOR_PRESETS["cyan"],
+    "#ff40ff": COLOR_PRESETS["magenta"],
+    "#ffff40": COLOR_PRESETS["yellow"],
+    "#ff9020": COLOR_PRESETS["orange"],
+    "#a040ff": COLOR_PRESETS["purple"],
+}
+
 DEFAULT_BRIGHTNESS = 70
-DEFAULT_COLOR = "#2080ff"
+DEFAULT_COLOR = COLOR_PRESETS["blue"]
 DEFAULT_SIDE = {"mode": "solid", "color": DEFAULT_COLOR, "brightness": DEFAULT_BRIGHTNESS}
 DEFAULT_CONFIG = {
     "left": dict(DEFAULT_SIDE),
@@ -85,17 +100,22 @@ def _rgb_dec_to_hex(r: int, g: int, b: int) -> str:
     return f"#{max(0, min(255, r)):02x}{max(0, min(255, g)):02x}{max(0, min(255, b)):02x}"
 
 
+def _canonical_color(hex_color: str) -> str:
+    normalized = hex_color.lower()
+    return LEGACY_COLOR_PRESETS.get(normalized, normalized)
+
+
 def _parse_colour_setting(raw: str | None) -> str:
     if not raw:
         return DEFAULT_COLOR
     parts = raw.replace(",", " ").split()
     if len(parts) >= 3:
         try:
-            return _rgb_dec_to_hex(int(parts[0]), int(parts[1]), int(parts[2]))
+            return _canonical_color(_rgb_dec_to_hex(int(parts[0]), int(parts[1]), int(parts[2])))
         except ValueError:
             pass
     if len(raw.strip()) == 6:
-        return f"#{raw.strip()}"
+        return _canonical_color(f"#{raw.strip()}")
     return DEFAULT_COLOR
 
 
@@ -120,7 +140,7 @@ def _normalize_side(entry: dict, previous: dict | None = None) -> dict:
         color = COLOR_PRESETS.get(color, side["color"])
     if not re.fullmatch(r"#[0-9a-f]{6}", color):
         color = str(side["color"])
-    side["color"] = color
+    side["color"] = _canonical_color(color)
 
     try:
         brightness = int(entry.get("brightness", side["brightness"]))
