@@ -1,5 +1,6 @@
-import { definePlugin } from "@decky/api";
+import { definePlugin, routerHook } from "@decky/api";
 import { getCompatApplied, getConfig, getInstalledGames, saveCompatApplied } from "./backend";
+import { OledScreensaverOverlay } from "./components/OledScreensaverOverlay";
 import { Content } from "./Content";
 import {
   configureCompatPolicy,
@@ -7,8 +8,10 @@ import {
   registerDownloadWatcher,
   sweepInstalledGames,
 } from "./lib/steamCompat";
+import { setOledScreensaverActive } from "./lib/oledScreensaver";
 
 export default definePlugin(() => {
+  routerHook.addGlobalComponent("BatoceraControlOledSaver", () => <OledScreensaverOverlay />);
   let unregisterDownloadWatcher = () => {};
   let cancelled = false;
   const persistHandledGames = () => saveCompatApplied(handledGameAppids()).catch(() => {});
@@ -38,6 +41,8 @@ export default definePlugin(() => {
     onDismount() {
       cancelled = true;
       unregisterDownloadWatcher();
+      setOledScreensaverActive(false);
+      routerHook.removeGlobalComponent("BatoceraControlOledSaver");
     },
     icon: (
       <svg

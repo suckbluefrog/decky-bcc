@@ -4,6 +4,8 @@ import type { Dispatch, SetStateAction } from "react";
 import { SelectEdit, SliderEdit } from "../components/widgets";
 import { clone, titleCase, update } from "../lib/util";
 import type { Config, PowerProfile } from "../types";
+import { AdaptiveCpu } from "./AdaptiveCpu";
+import { FanControl } from "./FanControl";
 
 const underclocks = [
   { data: "none", label: "None" },
@@ -14,13 +16,7 @@ const underclocks = [
 
 export function Power({ config, setConfig }: { config: Config; setConfig: Dispatch<SetStateAction<Config | null>> }) {
   const [profile, setProfile] = useState(config.power.general.default_profile || "balanced");
-  if (!config.powerSupported || !Object.keys(config.power.profiles || {}).length) {
-    return (
-      <PanelSection title="Power profiles">
-        <Field label="Unavailable" description={config.powerReason || "Power profile definitions are not installed on this image."} />
-      </PanelSection>
-    );
-  }
+  const profilesSupported = config.powerSupported && !!Object.keys(config.power.profiles || {}).length;
   const p = config.power.profiles[profile] || ({} as PowerProfile);
   const profiles = Object.entries(config.power.profiles || {}).map(([name, profile]) => ({
     data: name,
@@ -57,22 +53,32 @@ export function Power({ config, setConfig }: { config: Config; setConfig: Dispat
   const supportsUnderclockPresets = !!config.power.underclocks?.[config.cpuDeviceClass];
   return (
     <>
-      <PanelSection title="EDIT POWER PROFILE">
-        <SelectEdit value={profile} options={profiles} onChange={setProfile} />
-      </PanelSection>
-      <PanelSection title="PROFILE SETTINGS">
-        <SelectEdit label="Fan Curve" value={p.fan_curve} options={fanCurves} onChange={(v) => setProfileValue("fan_curve", v)} />
-        {supportsUnderclockPresets ? (
-          <SelectEdit label="CPU Underclock" value={underclockLevel} options={underclocks} onChange={(v) => setProfileValue("cpu_underclock", v)} />
-        ) : (
-          <SliderEdit label="CPU Max (%)" value={Math.round(Number(p.cpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setProfileValue("cpu_max", (v / 100).toFixed(2))} />
-        )}
-        <SliderEdit label="GPU Min (%)" value={Math.round(Number(p.gpu_min || 0) * 100)} min={0} max={100} step={1} onChange={(v) => setGpuValue("gpu_min", (v / 100).toFixed(2))} />
-        <SliderEdit label="GPU Max (%)" value={Math.round(Number(p.gpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setGpuValue("gpu_max", (v / 100).toFixed(2))} />
-        <div className="armada-reset-row">
-          <ButtonItem layout="below" onClick={resetProfile}>Reset to Default</ButtonItem>
-        </div>
-      </PanelSection>
+      {profilesSupported ? (
+        <>
+          <PanelSection title="EDIT POWER PROFILE">
+            <SelectEdit value={profile} options={profiles} onChange={setProfile} />
+          </PanelSection>
+          <PanelSection title="PROFILE SETTINGS">
+            <SelectEdit label="Fan Curve" value={p.fan_curve} options={fanCurves} onChange={(v) => setProfileValue("fan_curve", v)} />
+            {supportsUnderclockPresets ? (
+              <SelectEdit label="CPU Underclock" value={underclockLevel} options={underclocks} onChange={(v) => setProfileValue("cpu_underclock", v)} />
+            ) : (
+              <SliderEdit label="CPU Max (%)" value={Math.round(Number(p.cpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setProfileValue("cpu_max", (v / 100).toFixed(2))} />
+            )}
+            <SliderEdit label="GPU Min (%)" value={Math.round(Number(p.gpu_min || 0) * 100)} min={0} max={100} step={1} onChange={(v) => setGpuValue("gpu_min", (v / 100).toFixed(2))} />
+            <SliderEdit label="GPU Max (%)" value={Math.round(Number(p.gpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setGpuValue("gpu_max", (v / 100).toFixed(2))} />
+            <div className="armada-reset-row">
+              <ButtonItem layout="below" onClick={resetProfile}>Reset to Default</ButtonItem>
+            </div>
+          </PanelSection>
+        </>
+      ) : (
+        <PanelSection title="Power profiles">
+          <Field label="Unavailable" description={config.powerReason || "Power profile definitions are not installed on this image."} />
+        </PanelSection>
+      )}
+      <AdaptiveCpu config={config} setConfig={setConfig} />
+      <FanControl config={config} setConfig={setConfig} />
     </>
   );
 }

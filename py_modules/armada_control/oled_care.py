@@ -157,6 +157,7 @@ def get_state() -> dict:
         cfg = _parse_conf()
     return {
         "supported": supported(),
+        "panelDetected": BACKLIGHT.is_dir(),
         "reason": unsupported_reason(),
         "config": cfg,
         "labels": KEY_LABELS,

@@ -1,8 +1,9 @@
-import { DialogButton, Field, PanelSection } from "@decky/ui";
+import { DialogButton, Field, Navigation, PanelSection } from "@decky/ui";
 import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { restartOledCare, saveOledCare } from "../backend";
 import { SliderEdit, ToggleRow } from "../components/widgets";
+import { setOledScreensaverActive, useOledScreensaverActive } from "../lib/oledScreensaver";
 import type { Config, OledCareConfig } from "../types";
 
 function formatMinutes(seconds: number) {
@@ -20,15 +21,36 @@ export function OledCare({ config, setConfig }: {
   const revision = useRef(0);
   const timer = useRef<number | undefined>(undefined);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
+  const screensaverActive = useOledScreensaverActive();
   useEffect(() => () => {
     if (timer.current !== undefined) window.clearTimeout(timer.current);
   }, []);
   const oled = config.oledCare;
+  const screensaverPanel = oled?.panelDetected ? (
+    <PanelSection title="OLED screensaver">
+      <Field
+        label="Mostly-black moving display"
+        description="Keeps Steam and downloads running while replacing static UI with a dim, slowly moving mark. It does not suspend the system or change saved brightness."
+      />
+      <ToggleRow
+        label={screensaverActive ? "Screensaver active" : "Start screensaver"}
+        description="Press any controller button, keyboard key, or touch the screen to exit."
+        value={screensaverActive}
+        onChange={(enabled) => {
+          setOledScreensaverActive(enabled);
+          if (enabled) Navigation.CloseSideMenus();
+        }}
+      />
+    </PanelSection>
+  ) : null;
   if (!oled?.supported) {
     return (
-      <PanelSection title="OLED care">
-        <Field label="Unavailable" description={oled?.reason || "OLED care is not supported on this device."} />
-      </PanelSection>
+      <>
+        <PanelSection title="OLED care">
+          <Field label="Idle dim unavailable" description={oled?.reason || "OLED care is not supported on this device."} />
+        </PanelSection>
+        {screensaverPanel}
+      </>
     );
   }
 
@@ -89,6 +111,8 @@ export function OledCare({ config, setConfig }: {
           />
         )}
       </PanelSection>
+
+      {screensaverPanel}
 
       {cfg.ENABLED === 1 && (
         <>

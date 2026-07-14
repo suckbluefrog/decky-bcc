@@ -6,8 +6,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 USERDATA="${BATOCERA_USERDATA:-/userdata}"
 TARGET_PARENT="${USERDATA}/system/homebrew/plugins"
 TARGET="${TARGET_PARENT}/armada-control"
-STAGE="${TARGET_PARENT}/.armada-control.new.$$"
 DISABLED_PARENT="${USERDATA}/system/homebrew/disabled-plugins"
+STAGE="${USERDATA}/system/homebrew/.armada-control.new.$$"
 BACKUP="${DISABLED_PARENT}/armada-control-previous"
 LEGACY_BACKUP="${TARGET_PARENT}/.armada-control.previous"
 LOCK="/var/lock/batocera-control-install.lock"
@@ -24,7 +24,8 @@ fi
 
 for required in plugin.json main.py dist/index.js py_modules/armada_control/config.py \
     py_modules/batocera-control-game-launch py_modules/batocera-control-lsfg-launch \
-    py_modules/fex-profiles.json PAYLOAD.sha256; do
+    py_modules/batocera-control-paddles-service py_modules/fex-profiles.json \
+    PAYLOAD.sha256; do
     if [ ! -f "${ROOT}/${required}" ]; then
         echo "Batocera Control payload is incomplete: missing ${required}" >&2
         exit 1
@@ -63,7 +64,8 @@ cp -a "${ROOT}/main.py" "${ROOT}/plugin.json" "${ROOT}/package.json" \
 find "$STAGE" -type d -exec chmod 0755 {} +
 find "$STAGE" -type f -exec chmod 0644 {} +
 chmod 0755 "$STAGE/py_modules/batocera-control-game-launch" \
-    "$STAGE/py_modules/batocera-control-lsfg-launch"
+    "$STAGE/py_modules/batocera-control-lsfg-launch" \
+    "$STAGE/py_modules/batocera-control-paddles-service"
 
 # Install this before enabling the frontend policy. It stays behind on uninstall
 # so launch options already stored by Steam always reference a valid executable.
@@ -88,6 +90,33 @@ if ! mv "$STAGE" "$TARGET"; then
 fi
 
 echo "Installed Batocera Control $(cat "${TARGET}/VERSION")"
+
+PADDLE_SERVICE_NAME="batocera_control_paddles"
+PADDLE_SERVICE="${USERDATA}/system/services/${PADDLE_SERVICE_NAME}"
+install -D -m 0755 "${ROOT}/py_modules/batocera-control-paddles-service" \
+    "${PADDLE_SERVICE}"
+
+# The current rsinput driver owns the Odin 3 paddle GPIOs and publishes them as
+# normal gamepad events. Prefer the non-grabbing event listener and retire the
+# old direct-GPIO reader only when that exact capability set is present.
+if PYTHONPATH="${TARGET}/py_modules" python3 -m armada_control.paddle_daemon --probe >/dev/null 2>&1; then
+    if command -v batocera-services >/dev/null 2>&1; then
+        batocera-services disable odin_backpaddles >/dev/null 2>&1 || true
+        batocera-services enable "${PADDLE_SERVICE_NAME}" >/dev/null 2>&1 || true
+    fi
+    if test -s /var/run/odin-backpaddles.pid; then
+        kill "$(cat /var/run/odin-backpaddles.pid)" >/dev/null 2>&1 || true
+        rm -f /var/run/odin-backpaddles.pid
+    fi
+    pkill -f "[/]userdata/system/scripts/odin-backpaddles.py" >/dev/null 2>&1 || true
+    "${PADDLE_SERVICE}" restart
+    echo "Enabled rsinput rear-paddle listener"
+else
+    "${PADDLE_SERVICE}" stop >/dev/null 2>&1 || true
+    if command -v batocera-services >/dev/null 2>&1; then
+        batocera-services disable "${PADDLE_SERVICE_NAME}" >/dev/null 2>&1 || true
+    fi
+fi
 
 LEGACY_LSFG="${TARGET_PARENT}/decky-lsfg-vk"
 DISABLED_LSFG="${DISABLED_PARENT}/decky-lsfg-vk-merged"

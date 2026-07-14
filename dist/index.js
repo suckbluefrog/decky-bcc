@@ -16,6 +16,7 @@ if (api._version != API_VERSION) {
     console.warn(`[@decky/api] Requested API version ${API_VERSION} but the running loader only supports version ${api._version}. Some features may not work.`);
 }
 const call = api.call;
+const routerHook = api.routerHook;
 const definePlugin = (fn) => {
     return (...args) => {
         return fn(...args);
@@ -25,6 +26,10 @@ const definePlugin = (fn) => {
 const getConfig = () => call("get_config");
 const getInstalledGames = () => call("get_installed_games");
 const savePowerConfig = (data) => call("save_power_config", data);
+const getCpuLimit = () => call("get_cpu_limit");
+const saveCpuLimit = (data) => call("save_cpu_limit", data);
+const getFanControl = () => call("get_fan_control");
+const saveFanControl = (data) => call("save_fan_control", data);
 const saveTweaks = (data) => call("save_tweaks", data);
 const getCompatApplied = () => call("get_compat_applied");
 let compatAppliedSaveChain = Promise.resolve(undefined);
@@ -49,6 +54,117 @@ const restartOledCare = () => call("restart_oled_care");
 const saveBackPaddles = (data) => call("save_back_paddles", data);
 const saveLsfg = (data) => call("save_lsfg", data);
 const setLsfgGameEnabled = (appid, enabled) => call("set_lsfg_game_enabled", appid, enabled);
+
+let active = false;
+const listeners = new Set();
+function setOledScreensaverActive(value) {
+    if (active === value)
+        return;
+    active = value;
+    for (const listener of listeners)
+        listener(active);
+}
+function useOledScreensaverActive() {
+    const [value, setValue] = SP_REACT.useState(active);
+    SP_REACT.useEffect(() => {
+        listeners.add(setValue);
+        return () => {
+            listeners.delete(setValue);
+        };
+    }, []);
+    return value;
+}
+
+function controllerButtonsPressed(changes) {
+    return Array.isArray(changes) && changes.some((change) => {
+        try {
+            return BigInt(change?.ulButtons || 0) !== 0n || BigInt(change?.ulUpperButtons || 0) !== 0n;
+        }
+        catch (error) {
+            return Number(change?.ulButtons || 0) !== 0 || Number(change?.ulUpperButtons || 0) !== 0;
+        }
+    });
+}
+function OledScreensaverOverlay() {
+    const active = useOledScreensaverActive();
+    const [clock, setClock] = SP_REACT.useState("");
+    SP_REACT.useEffect(() => {
+        if (!active)
+            return;
+        const update = () => setClock(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+        update();
+        const timer = window.setInterval(update, 30000);
+        return () => window.clearInterval(timer);
+    }, [active]);
+    SP_REACT.useEffect(() => {
+        if (!active)
+            return;
+        const exit = () => setOledScreensaverActive(false);
+        const onKey = (event) => {
+            if (event.key)
+                exit();
+        };
+        window.addEventListener("keydown", onKey, true);
+        let registration;
+        const delay = window.setTimeout(() => {
+            try {
+                registration = window.SteamClient?.Input?.RegisterForControllerStateChanges?.((changes) => {
+                    if (controllerButtonsPressed(changes))
+                        exit();
+                });
+            }
+            catch (error) { }
+        }, 500);
+        return () => {
+            window.clearTimeout(delay);
+            window.removeEventListener("keydown", onKey, true);
+            try {
+                registration?.unregister?.();
+            }
+            catch (error) { }
+        };
+    }, [active]);
+    if (!active)
+        return null;
+    return (SP_JSX.jsxs("div", { "aria-label": "OLED screensaver; press any controller button or touch to exit", onPointerDown: () => setOledScreensaverActive(false), style: {
+            position: "fixed",
+            inset: 0,
+            zIndex: 7003,
+            overflow: "hidden",
+            background: "#000",
+            cursor: "none",
+            pointerEvents: "auto",
+        }, children: [SP_JSX.jsx("style", { children: `
+        @keyframes batocera-control-oled-drift {
+          0% { left: 7%; top: 9%; color: #3aa9c9; }
+          24% { left: 73%; top: 16%; color: #786bc4; }
+          49% { left: 68%; top: 76%; color: #3a9c78; }
+          74% { left: 12%; top: 69%; color: #a16d85; }
+          100% { left: 7%; top: 9%; color: #3aa9c9; }
+        }
+        .batocera-control-oled-mark {
+          position: absolute;
+          width: 20%;
+          min-width: 128px;
+          max-width: 240px;
+          opacity: 0.52;
+          animation: batocera-control-oled-drift 34s linear infinite;
+          text-align: center;
+          letter-spacing: 0.18em;
+          font-size: 18px;
+          font-weight: 600;
+          user-select: none;
+          will-change: left, top;
+        }
+        .batocera-control-oled-clock {
+          display: block;
+          margin-top: 7px;
+          font-size: 13px;
+          font-weight: 400;
+          letter-spacing: 0.12em;
+        }
+      ` }), SP_JSX.jsxs("div", { className: "batocera-control-oled-mark", children: ["BATOCERA", SP_JSX.jsx("span", { className: "batocera-control-oled-clock", children: clock })] })] }));
+}
 
 function useDebouncedSave(options) {
     const { config, field, snapshot, save, setConfig, onError, delay = 900 } = options;
@@ -209,11 +325,14 @@ function BackPaddles({ config, setConfig }) {
     const saveChain = SP_REACT.useRef(Promise.resolve());
     const bp = config.backPaddles;
     if (!bp?.supported) {
-        return SP_JSX.jsx(DFL.PanelSection, { title: "Back paddles", children: SP_JSX.jsx(DFL.Field, { label: "Unavailable", description: bp?.reason || "GPIO paddles were not detected." }) });
+        return SP_JSX.jsx(DFL.PanelSection, { title: "Back paddles", children: SP_JSX.jsx(DFL.Field, { label: "Unavailable", description: bp?.reason || "Rear-paddle input was not detected." }) });
     }
     const bindings = bp.bindings;
     const slots = bp.slots || [];
     const actions = bp.actions || [];
+    const mouseModeAssigned = Object.values(bindings).includes("mouse_toggle");
+    const backend = bp.source === "rsinput" ? "RSInput events + combos" : "Legacy GPIO + combos";
+    const device = [bp.device?.name, bp.device?.path].filter(Boolean).join(" — ");
     const apply = (next) => {
         const request = ++revision.current;
         setConfig((current) => (current && current.backPaddles ? { ...current, backPaddles: { ...current.backPaddles, bindings: next } } : current));
@@ -232,7 +351,7 @@ function BackPaddles({ config, setConfig }) {
     const update = (slot, action) => {
         apply({ ...bindings, [slot]: action });
     };
-    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSection, { title: "Back paddles (M1 / M2)", children: SP_JSX.jsx(DFL.Field, { label: "GPIO + combos", children: "Tap actions fire on release. Combos fire while M1/M2 is held and the second button is pressed." }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "Bindings", children: [bp.warning ? SP_JSX.jsx(DFL.Field, { label: "Warning", description: bp.warning }) : null, slots.map((slot) => (SP_JSX.jsx(SelectEdit, { label: slot.label, value: bindings[slot.data] || "none", options: actions, onChange: (value) => update(slot.data, value) }, slot.data)))] })] }));
+    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "Back paddles (M1 / M2)", children: [SP_JSX.jsx(DFL.Field, { label: backend, description: device || "AYN rear-paddle input", children: "Tap actions fire on release. Chords fire once while held. The listener observes without grabbing, so Steam, ES, and emulators still receive both paddles." }), bp.source === "rsinput" ? (SP_JSX.jsx(DFL.Field, { label: "Batocera hotkeys coexist", description: "Home/Hotkey + paddle is left to Batocera and suppresses the paddle tap action, preventing both mappings from firing together." })) : null] }), SP_JSX.jsxs(DFL.PanelSection, { title: "Bindings", children: [bp.warning ? SP_JSX.jsx(DFL.Field, { label: "Warning", description: bp.warning }) : null, mouseModeAssigned ? (SP_JSX.jsx(DFL.Field, { label: "Mouse mode pauses gamepad navigation", description: "Press the assigned paddle again to restore normal controls before changing or clearing its binding." })) : null, slots.map((slot) => (SP_JSX.jsx(SelectEdit, { label: slot.label, value: bindings[slot.data] || "none", options: actions, onChange: (value) => update(slot.data, value) }, slot.data)))] })] }));
 }
 
 const GLOBAL_RESOLUTION_KEY = "gamescope_game_resolution_global";
@@ -1304,13 +1423,19 @@ function OledCare({ config, setConfig }) {
     const revision = SP_REACT.useRef(0);
     const timer = SP_REACT.useRef(undefined);
     const saveChain = SP_REACT.useRef(Promise.resolve());
+    const screensaverActive = useOledScreensaverActive();
     SP_REACT.useEffect(() => () => {
         if (timer.current !== undefined)
             window.clearTimeout(timer.current);
     }, []);
     const oled = config.oledCare;
+    const screensaverPanel = oled?.panelDetected ? (SP_JSX.jsxs(DFL.PanelSection, { title: "OLED screensaver", children: [SP_JSX.jsx(DFL.Field, { label: "Mostly-black moving display", description: "Keeps Steam and downloads running while replacing static UI with a dim, slowly moving mark. It does not suspend the system or change saved brightness." }), SP_JSX.jsx(ToggleRow, { label: screensaverActive ? "Screensaver active" : "Start screensaver", description: "Press any controller button, keyboard key, or touch the screen to exit.", value: screensaverActive, onChange: (enabled) => {
+                    setOledScreensaverActive(enabled);
+                    if (enabled)
+                        DFL.Navigation.CloseSideMenus();
+                } })] })) : null;
     if (!oled?.supported) {
-        return (SP_JSX.jsx(DFL.PanelSection, { title: "OLED care", children: SP_JSX.jsx(DFL.Field, { label: "Unavailable", description: oled?.reason || "OLED care is not supported on this device." }) }));
+        return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSection, { title: "OLED care", children: SP_JSX.jsx(DFL.Field, { label: "Idle dim unavailable", description: oled?.reason || "OLED care is not supported on this device." }) }), screensaverPanel] }));
     }
     const cfg = oled.config;
     const runtime = oled.runtime;
@@ -1350,7 +1475,189 @@ function OledCare({ config, setConfig }) {
             console.error(error);
         }
     };
-    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "OLED care", children: [SP_JSX.jsx(DFL.Field, { label: "Burn-in protection", children: "Caps brightness and dims the panel after idle time. Pixel refresh is disabled." }), SP_JSX.jsx(ToggleRow, { label: "Enabled", value: cfg.ENABLED === 1, onChange: (enabled) => apply({ ENABLED: enabled ? 1 : 0 }) }), runtime && (SP_JSX.jsx(DFL.Field, { label: "Status", children: `Service ${runtime.serviceRunning ? "running" : "stopped"} · idle ${runtime.idleSeconds}s · brightness ${runtime.brightnessPct ?? "?"}%` }))] }), cfg.ENABLED === 1 && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "Brightness", children: [SP_JSX.jsx(SliderEdit, { label: "Normal", value: cfg.BRIGHTNESS_NORMAL, min: 10, max: 100, step: 1, format: (value) => `${Math.round(value)}%`, onChange: (value) => apply({ BRIGHTNESS_NORMAL: Math.round(Number(value)) }, 200) }), SP_JSX.jsx(SliderEdit, { label: "Idle dim", value: cfg.BRIGHTNESS_IDLE, min: 5, max: 80, step: 1, format: (value) => `${Math.round(value)}%`, onChange: (value) => apply({ BRIGHTNESS_IDLE: Math.round(Number(value)) }, 200) })] }), SP_JSX.jsx(DFL.PanelSection, { title: "Idle timing", children: SP_JSX.jsx(SliderEdit, { label: "Dim after", value: cfg.IDLE_DIM_SECONDS, min: 30, max: 1800, step: 30, format: formatMinutes, onChange: (value) => apply({ IDLE_DIM_SECONDS: Math.round(Number(value)) }, 200) }) }), SP_JSX.jsx(DFL.PanelSection, { title: "Actions", children: SP_JSX.jsx(DFL.DialogButton, { onClick: onRestart, children: "Restart OLED service" }) })] }))] }));
+    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "OLED care", children: [SP_JSX.jsx(DFL.Field, { label: "Burn-in protection", children: "Caps brightness and dims the panel after idle time. Pixel refresh is disabled." }), SP_JSX.jsx(ToggleRow, { label: "Enabled", value: cfg.ENABLED === 1, onChange: (enabled) => apply({ ENABLED: enabled ? 1 : 0 }) }), runtime && (SP_JSX.jsx(DFL.Field, { label: "Status", children: `Service ${runtime.serviceRunning ? "running" : "stopped"} · idle ${runtime.idleSeconds}s · brightness ${runtime.brightnessPct ?? "?"}%` }))] }), screensaverPanel, cfg.ENABLED === 1 && (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsxs(DFL.PanelSection, { title: "Brightness", children: [SP_JSX.jsx(SliderEdit, { label: "Normal", value: cfg.BRIGHTNESS_NORMAL, min: 10, max: 100, step: 1, format: (value) => `${Math.round(value)}%`, onChange: (value) => apply({ BRIGHTNESS_NORMAL: Math.round(Number(value)) }, 200) }), SP_JSX.jsx(SliderEdit, { label: "Idle dim", value: cfg.BRIGHTNESS_IDLE, min: 5, max: 80, step: 1, format: (value) => `${Math.round(value)}%`, onChange: (value) => apply({ BRIGHTNESS_IDLE: Math.round(Number(value)) }, 200) })] }), SP_JSX.jsx(DFL.PanelSection, { title: "Idle timing", children: SP_JSX.jsx(SliderEdit, { label: "Dim after", value: cfg.IDLE_DIM_SECONDS, min: 30, max: 1800, step: 30, format: formatMinutes, onChange: (value) => apply({ IDLE_DIM_SECONDS: Math.round(Number(value)) }, 200) }) }), SP_JSX.jsx(DFL.PanelSection, { title: "Actions", children: SP_JSX.jsx(DFL.DialogButton, { onClick: onRestart, children: "Restart OLED service" }) })] }))] }));
+}
+
+const MODE_LABELS = {
+    off: "Off",
+    auto: "Thermal guard",
+    adaptive: "Adaptive FPS",
+};
+function capLabel(value) {
+    if (value === "auto")
+        return "Automatic / game setting";
+    if (value === "none")
+        return "No fixed cap";
+    return `${value}% maximum`;
+}
+function targetLabel(value) {
+    return value === "auto" ? "Automatic (infer from game)" : `${value} FPS`;
+}
+function runtimeLabel(state) {
+    const parts = [state.running ? "Limiter running" : "Limiter stopped"];
+    if (state.fps !== null)
+        parts.push(`${state.fps.toFixed(1)} FPS`);
+    if (state.currentTdp !== null)
+        parts.push(`${state.currentTdp} W`);
+    if (state.minTdp !== null && state.maxTdp !== null)
+        parts.push(`range ${state.minTdp}–${state.maxTdp} W`);
+    if (state.temperatureC !== null)
+        parts.push(`${state.temperatureC.toFixed(1)}°C`);
+    if (state.fanPercent !== null)
+        parts.push(`fan ${Math.round(state.fanPercent)}%`);
+    return parts.join(" · ");
+}
+function AdaptiveCpu({ config, setConfig }) {
+    const revision = SP_REACT.useRef(0);
+    const saveChain = SP_REACT.useRef(Promise.resolve());
+    const busy = SP_REACT.useRef(false);
+    const [message, setMessage] = SP_REACT.useState("");
+    const state = config.cpuLimit;
+    SP_REACT.useEffect(() => {
+        let cancelled = false;
+        const refresh = async () => {
+            if (busy.current)
+                return;
+            try {
+                const next = await getCpuLimit();
+                if (!cancelled && !busy.current) {
+                    setConfig((current) => (current ? { ...current, cpuLimit: next } : current));
+                }
+            }
+            catch (error) { }
+        };
+        const timer = window.setInterval(refresh, 3000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
+    }, [setConfig]);
+    if (!state?.supported) {
+        return (SP_JSX.jsx(DFL.PanelSection, { title: "Adaptive power", children: SP_JSX.jsx(DFL.Field, { label: "Unavailable", description: state?.reason || "Batocera's adaptive power limiter is unavailable." }) }));
+    }
+    const apply = (patch) => {
+        const next = {
+            mode: patch.mode ?? state.mode,
+            globalCap: patch.globalCap ?? state.globalCap,
+            globalTargetFps: patch.globalTargetFps ?? state.globalTargetFps,
+        };
+        const request = ++revision.current;
+        busy.current = true;
+        setMessage("Applying…");
+        setConfig((current) => current?.cpuLimit
+            ? { ...current, cpuLimit: { ...current.cpuLimit, ...next } }
+            : current);
+        saveChain.current = saveChain.current.catch(() => { }).then(async () => {
+            try {
+                const saved = await saveCpuLimit(next);
+                if (request === revision.current) {
+                    setConfig((current) => (current ? { ...current, cpuLimit: saved } : current));
+                    setMessage("Saved and applied");
+                }
+            }
+            catch (error) {
+                if (request === revision.current)
+                    setMessage(String(error));
+            }
+            finally {
+                if (request === revision.current)
+                    busy.current = false;
+            }
+        });
+    };
+    const modeOptions = state.modeOptions.map((value) => ({
+        data: value,
+        label: state.kind === "tdp" && value === "adaptive" ? "Adaptive TDP / FPS" : MODE_LABELS[value] || value,
+    }));
+    const capOptions = state.capOptions.map((value) => ({ data: value, label: capLabel(value) }));
+    const targetOptions = state.targetOptions.map((value) => ({ data: value, label: targetLabel(value) }));
+    return (SP_JSX.jsxs(DFL.PanelSection, { title: state.kind === "tdp" ? "Adaptive TDP" : "Adaptive CPU", children: [state.kind === "tdp" ? (SP_JSX.jsx(DFL.Field, { label: "Batocera package-power limiter", description: "Adaptive TDP lowers package power in one-watt steps while frame rate has headroom and raises it when FPS falls. Your existing TDP setting remains the ceiling; this control does not replace or override the normal TDP slider." })) : (SP_JSX.jsx(DFL.Field, { label: "Batocera CPU limiter", description: "Thermal guard reacts to temperature and fan load. Adaptive FPS also reduces the CPU ceiling while frame rate has headroom, then releases it when FPS falls. It never overclocks." })), SP_JSX.jsx(SelectEdit, { label: "Mode", value: state.mode, options: modeOptions, onChange: (mode) => apply({ mode }) }), state.kind === "cpu" ? (SP_JSX.jsx(SelectEdit, { label: "CPU ceiling", value: state.globalCap, options: capOptions, onChange: (globalCap) => apply({ globalCap }) })) : null, SP_JSX.jsx(SelectEdit, { label: "Target frame rate", value: state.globalTargetFps, options: targetOptions, disabled: state.mode !== "adaptive", onChange: (globalTargetFps) => apply({ globalTargetFps }) }), SP_JSX.jsx(DFL.Field, { label: "Runtime", description: runtimeLabel(state) }), SP_JSX.jsx(DFL.Field, { label: "FPS source", description: `${state.dataSource}. Steam uses Gamescope statistics; ES-launched emulators use Batocera's hidden FPS sampler. This is independent of the visible MangoHud performance overlay.` }), message ? SP_JSX.jsx(DFL.Field, { label: "Last change", description: message }) : null] }));
+}
+
+const MODES = [
+    { data: "auto", label: "Automatic temperature curve" },
+    { data: "manual", label: "Manual override" },
+];
+function FanControl({ config, setConfig }) {
+    const revision = SP_REACT.useRef(0);
+    const timer = SP_REACT.useRef(undefined);
+    const saveChain = SP_REACT.useRef(Promise.resolve());
+    const busy = SP_REACT.useRef(false);
+    const [message, setMessage] = SP_REACT.useState("");
+    const state = config.fanControl;
+    SP_REACT.useEffect(() => {
+        let cancelled = false;
+        const refresh = async () => {
+            if (busy.current)
+                return;
+            try {
+                const next = await getFanControl();
+                if (!cancelled && !busy.current) {
+                    setConfig((current) => (current ? { ...current, fanControl: next } : current));
+                }
+            }
+            catch (error) { }
+        };
+        const poll = window.setInterval(refresh, 3000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(poll);
+            if (timer.current !== undefined)
+                window.clearTimeout(timer.current);
+        };
+    }, [setConfig]);
+    if (!state?.supported)
+        return null;
+    const mode = state.mode === "manual" ? "manual" : "auto";
+    const minimum = state.minimumManualPercent || 20;
+    const target = Math.max(minimum, Math.min(100, Math.round(state.targetPercent ?? state.percent ?? 40)));
+    const telemetry = [
+        state.percent !== null ? `${Math.round(state.percent)}%` : "speed unavailable",
+        state.rpm !== null ? `${Math.round(state.rpm)} RPM` : "",
+        state.name,
+    ].filter(Boolean).join(" · ");
+    const apply = (next, delay = 0) => {
+        const request = ++revision.current;
+        busy.current = true;
+        setMessage(delay ? "Waiting to apply…" : "Applying…");
+        setConfig((current) => current?.fanControl
+            ? {
+                ...current,
+                fanControl: {
+                    ...current.fanControl,
+                    mode: next.mode,
+                    targetPercent: next.mode === "manual" ? next.targetPercent : current.fanControl.targetPercent,
+                },
+            }
+            : current);
+        if (timer.current !== undefined)
+            window.clearTimeout(timer.current);
+        const commit = () => {
+            timer.current = undefined;
+            saveChain.current = saveChain.current.catch(() => { }).then(async () => {
+                try {
+                    const saved = await saveFanControl(next);
+                    if (request === revision.current) {
+                        setConfig((current) => (current ? { ...current, fanControl: saved } : current));
+                        setMessage("Saved and applied");
+                    }
+                }
+                catch (error) {
+                    if (request === revision.current)
+                        setMessage(String(error));
+                }
+                finally {
+                    if (request === revision.current)
+                        busy.current = false;
+                }
+            });
+        };
+        if (delay)
+            timer.current = window.setTimeout(commit, delay);
+        else
+            commit();
+    };
+    return (SP_JSX.jsxs(DFL.PanelSection, { title: "Fan control", children: [SP_JSX.jsx(DFL.Field, { label: "Batocera qcom-fan", description: "Uses the same native auto/manual controls as Batocera Control Center outside Steam. Automatic is recommended for normal use." }), SP_JSX.jsx(SelectEdit, { label: "Mode", value: mode, options: MODES, disabled: !state.controllable, onChange: (nextMode) => apply({ mode: nextMode, targetPercent: target }) }), mode === "manual" ? (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(SliderEdit, { label: "Manual speed", value: target, min: minimum, max: 100, step: 5, format: (value) => `${Math.round(value)}%`, onChange: (targetPercent) => apply({ mode: "manual", targetPercent: Math.round(targetPercent) }, 200) }), SP_JSX.jsx(DFL.Field, { label: "Manual override active", description: "The temperature curve is disabled until Automatic is selected again. Watch temperature during sustained loads." })] })) : null, SP_JSX.jsx(DFL.Field, { label: "Current fan", description: telemetry }), !state.controllable ? SP_JSX.jsx(DFL.Field, { label: "Read only", description: state.reason }) : null, message ? SP_JSX.jsx(DFL.Field, { label: "Last change", description: message }) : null] }));
 }
 
 const underclocks = [
@@ -1361,9 +1668,7 @@ const underclocks = [
 ];
 function Power({ config, setConfig }) {
     const [profile, setProfile] = SP_REACT.useState(config.power.general.default_profile || "balanced");
-    if (!config.powerSupported || !Object.keys(config.power.profiles || {}).length) {
-        return (SP_JSX.jsx(DFL.PanelSection, { title: "Power profiles", children: SP_JSX.jsx(DFL.Field, { label: "Unavailable", description: config.powerReason || "Power profile definitions are not installed on this image." }) }));
-    }
+    const profilesSupported = config.powerSupported && !!Object.keys(config.power.profiles || {}).length;
     const p = config.power.profiles[profile] || {};
     const profiles = Object.entries(config.power.profiles || {}).map(([name, profile]) => ({
         data: name,
@@ -1400,7 +1705,7 @@ function Power({ config, setConfig }) {
     };
     const underclockLevel = p.cpu_underclock || "";
     const supportsUnderclockPresets = !!config.power.underclocks?.[config.cpuDeviceClass];
-    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSection, { title: "EDIT POWER PROFILE", children: SP_JSX.jsx(SelectEdit, { value: profile, options: profiles, onChange: setProfile }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "PROFILE SETTINGS", children: [SP_JSX.jsx(SelectEdit, { label: "Fan Curve", value: p.fan_curve, options: fanCurves, onChange: (v) => setProfileValue("fan_curve", v) }), supportsUnderclockPresets ? (SP_JSX.jsx(SelectEdit, { label: "CPU Underclock", value: underclockLevel, options: underclocks, onChange: (v) => setProfileValue("cpu_underclock", v) })) : (SP_JSX.jsx(SliderEdit, { label: "CPU Max (%)", value: Math.round(Number(p.cpu_max || 0) * 100), min: 35, max: 100, step: 1, onChange: (v) => setProfileValue("cpu_max", (v / 100).toFixed(2)) })), SP_JSX.jsx(SliderEdit, { label: "GPU Min (%)", value: Math.round(Number(p.gpu_min || 0) * 100), min: 0, max: 100, step: 1, onChange: (v) => setGpuValue("gpu_min", (v / 100).toFixed(2)) }), SP_JSX.jsx(SliderEdit, { label: "GPU Max (%)", value: Math.round(Number(p.gpu_max || 0) * 100), min: 35, max: 100, step: 1, onChange: (v) => setGpuValue("gpu_max", (v / 100).toFixed(2)) }), SP_JSX.jsx("div", { className: "armada-reset-row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: resetProfile, children: "Reset to Default" }) })] })] }));
+    return (SP_JSX.jsxs(SP_JSX.Fragment, { children: [profilesSupported ? (SP_JSX.jsxs(SP_JSX.Fragment, { children: [SP_JSX.jsx(DFL.PanelSection, { title: "EDIT POWER PROFILE", children: SP_JSX.jsx(SelectEdit, { value: profile, options: profiles, onChange: setProfile }) }), SP_JSX.jsxs(DFL.PanelSection, { title: "PROFILE SETTINGS", children: [SP_JSX.jsx(SelectEdit, { label: "Fan Curve", value: p.fan_curve, options: fanCurves, onChange: (v) => setProfileValue("fan_curve", v) }), supportsUnderclockPresets ? (SP_JSX.jsx(SelectEdit, { label: "CPU Underclock", value: underclockLevel, options: underclocks, onChange: (v) => setProfileValue("cpu_underclock", v) })) : (SP_JSX.jsx(SliderEdit, { label: "CPU Max (%)", value: Math.round(Number(p.cpu_max || 0) * 100), min: 35, max: 100, step: 1, onChange: (v) => setProfileValue("cpu_max", (v / 100).toFixed(2)) })), SP_JSX.jsx(SliderEdit, { label: "GPU Min (%)", value: Math.round(Number(p.gpu_min || 0) * 100), min: 0, max: 100, step: 1, onChange: (v) => setGpuValue("gpu_min", (v / 100).toFixed(2)) }), SP_JSX.jsx(SliderEdit, { label: "GPU Max (%)", value: Math.round(Number(p.gpu_max || 0) * 100), min: 35, max: 100, step: 1, onChange: (v) => setGpuValue("gpu_max", (v / 100).toFixed(2)) }), SP_JSX.jsx("div", { className: "armada-reset-row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", onClick: resetProfile, children: "Reset to Default" }) })] })] })) : (SP_JSX.jsx(DFL.PanelSection, { title: "Power profiles", children: SP_JSX.jsx(DFL.Field, { label: "Unavailable", description: config.powerReason || "Power profile definitions are not installed on this image." }) })), SP_JSX.jsx(AdaptiveCpu, { config: config, setConfig: setConfig }), SP_JSX.jsx(FanControl, { config: config, setConfig: setConfig })] }));
 }
 
 const CAPTURE_CONTROLS = ["left_x", "left_y", "right_x", "right_y", "left_trigger", "right_trigger"];
@@ -1697,6 +2002,7 @@ function Content() {
 }
 
 var index = definePlugin(() => {
+    routerHook.addGlobalComponent("BatoceraControlOledSaver", () => SP_JSX.jsx(OledScreensaverOverlay, {}));
     let unregisterDownloadWatcher = () => { };
     let cancelled = false;
     const persistHandledGames = () => saveCompatApplied(handledGameAppids()).catch(() => { });
@@ -1723,6 +2029,8 @@ var index = definePlugin(() => {
         onDismount() {
             cancelled = true;
             unregisterDownloadWatcher();
+            setOledScreensaverActive(false);
+            routerHook.removeGlobalComponent("BatoceraControlOledSaver");
         },
         icon: (SP_JSX.jsxs("svg", { xmlns: "http://www.w3.org/2000/svg", width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [SP_JSX.jsx("path", { d: "M14 17H5" }), SP_JSX.jsx("path", { d: "M19 7h-9" }), SP_JSX.jsx("circle", { cx: "17", cy: "17", r: "3" }), SP_JSX.jsx("circle", { cx: "7", cy: "7", r: "3" })] })),
         alwaysRender: true,

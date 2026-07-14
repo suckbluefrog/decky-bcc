@@ -15,6 +15,7 @@ BATOCERA_USERDATA="$TEST_ROOT" bash "$ROOT/install.sh" --no-restart
 test -s "$TEST_ROOT/system/homebrew/plugins/armada-control/dist/index.js"
 test -x "$TEST_ROOT/system/bin/batocera-control-game-launch"
 test -x "$TEST_ROOT/system/bin/batocera-control-lsfg-launch"
+test -x "$TEST_ROOT/system/services/batocera_control_paddles"
 test -s "$TEST_ROOT/system/configs/batocera-control/fex-profiles.json"
 test "$(cat "$TEST_ROOT/system/homebrew/plugins/armada-control/VERSION")" = "$(cat "$ROOT/VERSION")"
 test ! -e "$TEST_ROOT/system/homebrew/plugins/decky-lsfg-vk"
@@ -26,5 +27,12 @@ printf '{"name":"legacy backup"}\n' > "$TEST_ROOT/system/homebrew/plugins/.armad
 BATOCERA_USERDATA="$TEST_ROOT" bash "$ROOT/install.sh" --no-restart
 test ! -e "$TEST_ROOT/system/homebrew/plugins/.armada-control.previous"
 test -d "$TEST_ROOT/system/homebrew/disabled-plugins/armada-control-previous"
+
+BATOCERA_USERDATA="$TEST_ROOT" bash "$ROOT/uninstall.sh"
+test ! -e "$TEST_ROOT/system/homebrew/plugins/armada-control"
+test ! -e "$TEST_ROOT/system/homebrew/disabled-plugins/armada-control-previous"
+test ! -e "$TEST_ROOT/system/services/batocera_control_paddles"
+test -x "$TEST_ROOT/system/bin/batocera-control-game-launch"
+test -x "$TEST_ROOT/system/bin/batocera-control-lsfg-launch"
 
 echo "Installer smoke test passed"

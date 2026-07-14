@@ -1,0 +1,66 @@
+#!/bin/sh
+
+NAME="batocera_control_paddles"
+PIDFILE="/var/run/batocera-control-paddles.pid"
+LOGFILE="/userdata/system/logs/batocera-control-paddles.log"
+MODULES="/userdata/system/homebrew/plugins/armada-control/py_modules"
+DAEMON="/usr/bin/python3"
+
+running() {
+    test -s "${PIDFILE}" || return 1
+    kill -0 "$(cat "${PIDFILE}")" >/dev/null 2>&1
+}
+
+start() {
+    if running; then
+        echo "${NAME}: already running"
+        return 0
+    fi
+    rm -f "${PIDFILE}"
+    mkdir -p "$(dirname "${LOGFILE}")"
+    if test ! -f "${MODULES}/armada_control/paddle_daemon.py"; then
+        echo "${NAME}: plugin backend is missing" >&2
+        return 1
+    fi
+    export PYTHONPATH="${MODULES}${PYTHONPATH:+:${PYTHONPATH}}"
+    start-stop-daemon --start --quiet --background --make-pidfile \
+        --pidfile "${PIDFILE}" --output "${LOGFILE}" --exec "${DAEMON}" -- \
+        -m armada_control.paddle_daemon
+}
+
+stop() {
+    if test -s "${PIDFILE}"; then
+        start-stop-daemon --stop --quiet --pidfile "${PIDFILE}" >/dev/null 2>&1 || true
+    fi
+    rm -f "${PIDFILE}"
+    pkill -f "^/usr/bin/python3 -m armada_control[.]paddle_daemon$" >/dev/null 2>&1 || true
+}
+
+status() {
+    if running; then
+        echo "${NAME}: running"
+        return 0
+    fi
+    echo "${NAME}: stopped"
+    return 1
+}
+
+case "${1:-}" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        stop
+        start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}" >&2
+        exit 2
+        ;;
+esac

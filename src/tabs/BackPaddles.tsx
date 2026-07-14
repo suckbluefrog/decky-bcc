@@ -13,12 +13,15 @@ export function BackPaddles({ config, setConfig }: {
   const saveChain = useRef<Promise<void>>(Promise.resolve());
   const bp = config.backPaddles;
   if (!bp?.supported) {
-    return <PanelSection title="Back paddles"><Field label="Unavailable" description={bp?.reason || "GPIO paddles were not detected."} /></PanelSection>;
+    return <PanelSection title="Back paddles"><Field label="Unavailable" description={bp?.reason || "Rear-paddle input was not detected."} /></PanelSection>;
   }
 
   const bindings = bp.bindings;
   const slots = bp.slots || [];
   const actions = bp.actions || [];
+  const mouseModeAssigned = Object.values(bindings).includes("mouse_toggle");
+  const backend = bp.source === "rsinput" ? "RSInput events + combos" : "Legacy GPIO + combos";
+  const device = [bp.device?.name, bp.device?.path].filter(Boolean).join(" — ");
 
   const apply = (next: BackPaddleBindings) => {
     const request = ++revision.current;
@@ -43,12 +46,25 @@ export function BackPaddles({ config, setConfig }: {
     <>
       <PanelSection title="Back paddles (M1 / M2)">
         <Field
-          label="GPIO + combos"
-          children="Tap actions fire on release. Combos fire while M1/M2 is held and the second button is pressed."
+          label={backend}
+          description={device || "AYN rear-paddle input"}
+          children="Tap actions fire on release. Chords fire once while held. The listener observes without grabbing, so Steam, ES, and emulators still receive both paddles."
         />
+        {bp.source === "rsinput" ? (
+          <Field
+            label="Batocera hotkeys coexist"
+            description="Home/Hotkey + paddle is left to Batocera and suppresses the paddle tap action, preventing both mappings from firing together."
+          />
+        ) : null}
       </PanelSection>
       <PanelSection title="Bindings">
         {bp.warning ? <Field label="Warning" description={bp.warning} /> : null}
+        {mouseModeAssigned ? (
+          <Field
+            label="Mouse mode pauses gamepad navigation"
+            description="Press the assigned paddle again to restore normal controls before changing or clearing its binding."
+          />
+        ) : null}
         {slots.map((slot) => (
           <SelectEdit
             key={slot.data}

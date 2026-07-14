@@ -2,6 +2,8 @@ import copy
 
 from .controller import CONTROLLER_TYPES, controller_type, supported as controller_supported
 from .back_paddles import get_state as back_paddles_state
+from .cpu_limit import get_state as cpu_limit_state
+from .fan_control import get_state as fan_control_state
 from .joystick_led import COLOR_PRESETS, get_state as joystick_led_state
 from .lsfg import get_state as lsfg_state
 from .oled_care import get_state as oled_care_state
@@ -73,6 +75,47 @@ def build_config(include_games=True):
         "powerDefaults": power_defaults,
         "powerSupported": power_supported(),
         "powerReason": power_unsupported_reason(),
+        "cpuLimit": _safe(
+            "Adaptive power",
+            cpu_limit_state,
+            {
+                "supported": False,
+                "reason": "Adaptive power state is unavailable",
+                "kind": "cpu",
+                "mode": "off",
+                "globalCap": "auto",
+                "globalTargetFps": "auto",
+                "running": False,
+                "temperatureC": None,
+                "fanPercent": None,
+                "fps": None,
+                "currentTdp": None,
+                "minTdp": None,
+                "maxTdp": None,
+                "session": {},
+                "dataSource": "Waiting for a game session",
+                "modeOptions": ["off", "auto", "adaptive"],
+                "capOptions": ["auto", "none", "95", "90", "85", "80", "75", "70", "65", "60", "55", "50"],
+                "targetOptions": ["auto", "30", "50", "60", "90", "120"],
+            },
+            warnings,
+        ),
+        "fanControl": _safe(
+            "Fan control",
+            fan_control_state,
+            {
+                "supported": False,
+                "reason": "Fan state is unavailable",
+                "controllable": False,
+                "name": "",
+                "mode": "",
+                "percent": None,
+                "targetPercent": None,
+                "rpm": None,
+                "minimumManualPercent": 20,
+            },
+            warnings,
+        ),
         "tweaks": _safe("Game tweaks", load_tweaks, _TWEAKS_STUB, warnings),
         "installedGames": _safe("Steam games", installed_games, [], warnings) if include_games else [],
         "fexProfiles": _safe("FEX profile labels", lambda: fex_profile_labels(fex_contract), {}, warnings),
@@ -92,7 +135,7 @@ def build_config(include_games=True):
         "oledCare": _safe(
             "OLED care",
             oled_care_state,
-            {"supported": False, "reason": "OLED care state is unavailable", "config": {}, "labels": {}, "runtime": {}},
+            {"supported": False, "panelDetected": False, "reason": "OLED care state is unavailable", "config": {}, "labels": {}, "runtime": {}},
             warnings,
         ),
         "backPaddles": _safe(

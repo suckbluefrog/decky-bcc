@@ -1,10 +1,22 @@
 #!/bin/bash
 set -euo pipefail
 
-TARGET=/userdata/system/homebrew/plugins/armada-control
-BACKUP=/userdata/system/homebrew/plugins/.armada-control.previous
+USERDATA="${BATOCERA_USERDATA:-/userdata}"
+TARGET="${USERDATA}/system/homebrew/plugins/armada-control"
+BACKUP="${USERDATA}/system/homebrew/disabled-plugins/armada-control-previous"
+LEGACY_BACKUP="${USERDATA}/system/homebrew/plugins/.armada-control.previous"
+PADDLE_SERVICE_NAME="batocera_control_paddles"
+PADDLE_SERVICE="${USERDATA}/system/services/${PADDLE_SERVICE_NAME}"
 
-rm -rf "$TARGET" "$BACKUP"
+if [ -f "$PADDLE_SERVICE" ]; then
+    "$PADDLE_SERVICE" stop >/dev/null 2>&1 || true
+fi
+if command -v batocera-services >/dev/null 2>&1; then
+    batocera-services disable "$PADDLE_SERVICE_NAME" >/dev/null 2>&1 || true
+fi
+rm -f "$PADDLE_SERVICE" /var/run/batocera-control-paddles.pid
+
+rm -rf "$TARGET" "$BACKUP" "$LEGACY_BACKUP"
 
 echo "Batocera Control plugin removed."
 echo "Settings and the Batocera Control game/LSFG launch helpers were retained."

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.2.9 - 2026-07-14
+
+- Add Batocera's native thermal/adaptive CPU limiter to the Power tab, with
+  persistent cap and target-FPS settings plus live FPS, temperature, fan, and
+  data-source status. Keep its hidden FPS sampler distinct from the visible
+  Steam MangoHud overlay.
+- Feature-detect the Zen3/x86 `batocera-tdp-limit` sibling and expose adaptive
+  package power without replacing the normal TDP ceiling; explicitly restore
+  the pre-session TDP when the adaptive mode is switched off.
+- Add feature-detected Qualcomm fan controls using the same `qcom-fan auto`
+  and manual-speed paths as Batocera Control Center outside Steam.
+- Add a mostly-black moving OLED screensaver for detected Odin OLED panels;
+  it leaves Steam/downloads running and exits on controller, keyboard, or
+  touch input without changing brightness or suspend state.
+- Stage plugin upgrades outside Decky's active plugin directory so its hot
+  loader cannot discover a half-copied temporary plugin during installation.
+
+## 0.2.8 - 2026-07-14
+
+- Stop assigning mouse mode to M2 by default; the old preset could replace
+  Steam gamepad navigation as soon as the right paddle was pressed.
+- Safely migrate the exact unversioned 0.2.6/0.2.7 preset, version future
+  binding saves, and warn how to exit mouse mode when it is explicitly chosen.
+
+## 0.2.7 - 2026-07-14
+
+- Detect AYN rsinput paddle capabilities through sysfs in Decky's x86/FEX
+  backend, while retaining native python-evdev for the persistent ARM listener.
+  This prevents a working Odin 3 listener from being mislabeled as an
+  unavailable legacy GPIO backend in the Steam panel.
+
+## 0.2.6 - 2026-07-14
+
+- Detect Odin 3 rear paddles from the current `rsinput` event capabilities
+  (`BTN_TRIGGER_HAPPY7`/`BTN_TRIGGER_HAPPY5`) instead of requiring the retired
+  direct-GPIO interface, without hard-coding an `eventN` number.
+- Add a persistent, non-grabbing paddle listener with hotplug/resume recovery,
+  tap and combo actions, and coexistence with Batocera's Hotkey+paddle mappings.
+- Retain the legacy GPIO backend for older images and label M1/left and M2/right
+  explicitly in the Decky UI.
+
 ## 0.2.5 - 2026-07-12
 
 - Add per-game LSFG-VK activation that preserves existing Steam launch options,

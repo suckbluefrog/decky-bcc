@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -13,7 +14,7 @@ from unittest import mock
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_ROOT / "py_modules"))
 
-from armada_control import back_paddles, calibration, joystick_led, lsfg, paddle_actions, power, runtime, system  # noqa: E402
+from armada_control import back_paddles, calibration, cpu_limit, fan_control, joystick_led, lsfg, paddle_actions, paddle_daemon, power, runtime, system  # noqa: E402
 
 
 class JoystickLedTests(unittest.TestCase):
@@ -190,18 +191,39 @@ class CalibrationTests(unittest.TestCase):
 
 
 class BackPaddleTests(unittest.TestCase):
+    def test_fresh_defaults_do_not_take_over_gamepad_navigation(self):
+        self.assertEqual(paddle_actions.DEFAULT_BINDINGS["m2"], "none")
+        self.assertNotIn("mouse_toggle", paddle_actions.DEFAULT_BINDINGS.values())
+
+    def test_unversioned_unsafe_defaults_migrate_to_safe_m2_binding(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "back-paddles.json"
+            config.write_text(
+                json.dumps({"bindings": back_paddles.LEGACY_UNSAFE_DEFAULT_BINDINGS}),
+                encoding="utf-8",
+            )
+            with mock.patch.object(back_paddles, "CONFIG_PATH", config):
+                bindings = back_paddles.load_bindings()
+
+        self.assertEqual(bindings["m2"], "none")
+
     def test_rejects_unknown_actions_and_writes_atomically(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            gpio = root / "gpiochip8"
-            service = root / "odin_backpaddles"
-            gpio.touch()
+            service = root / "batocera_control_paddles"
             service.touch()
             config = root / "back-paddles.json"
+            backend = {
+                "source": "rsinput",
+                "device": {"name": "AYN Odin3 Gamepad", "path": "/dev/input/event2"},
+                "service": service,
+                "service_name": "batocera_control_paddles",
+                "reason": "",
+            }
             with (
-                mock.patch.object(back_paddles, "GPIO_CHIP", gpio),
-                mock.patch.object(back_paddles, "SERVICE", service),
                 mock.patch.object(back_paddles, "CONFIG_PATH", config),
+                mock.patch.object(back_paddles, "_detect_backend", return_value=backend),
+                mock.patch.object(back_paddles, "_backend_running", return_value=True),
                 mock.patch.object(back_paddles, "_restart_daemon"),
             ):
                 with self.assertRaisesRegex(ValueError, "invalid action"):
@@ -210,7 +232,94 @@ class BackPaddleTests(unittest.TestCase):
                 result = back_paddles.save_state({"m1": "screenshot", "m2": "mouse_left"})
 
             self.assertEqual(result["bindings"]["m1"], "screenshot")
+            self.assertEqual(result["source"], "rsinput")
             self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o644)
+            self.assertEqual(json.loads(config.read_text(encoding="utf-8"))["version"], 2)
+
+    def test_detects_ayn_rsinput_by_capabilities_not_event_number(self):
+        fake = mock.Mock()
+        fake.name = "AYN Odin3 Gamepad"
+        fake.path = "/dev/input/event11"
+        fake.info.vendor = 0x2020
+        fake.capabilities.return_value = {
+            1: [back_paddles.RSINPUT_M1_CODE, back_paddles.RSINPUT_M2_CODE, 304]
+        }
+        with (
+            mock.patch.object(back_paddles, "evdev") as mocked_evdev,
+            mock.patch.object(back_paddles, "ecodes") as mocked_ecodes,
+            mock.patch.object(back_paddles, "_input_candidates", return_value=[Path("/dev/input/event11")]),
+        ):
+            mocked_ecodes.EV_KEY = 1
+            mocked_evdev.InputDevice.return_value = fake
+            info = back_paddles.rsinput_device_info()
+
+        self.assertEqual(info["path"], "/dev/input/event11")
+        self.assertEqual(info["m1Code"], 710)
+        self.assertEqual(info["m2Code"], 708)
+        fake.close.assert_called_once()
+
+    def test_detects_ayn_rsinput_from_sysfs_without_evdev(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            device = root / "event11/device"
+            (device / "id").mkdir(parents=True)
+            (device / "capabilities").mkdir()
+            (device / "name").write_text("AYN Odin3 Gamepad\n", encoding="utf-8")
+            (device / "id/vendor").write_text("2020\n", encoding="ascii")
+
+            words = [0] * 12
+            for code in back_paddles.RSINPUT_REQUIRED_CODES:
+                words[code // 64] |= 1 << (code % 64)
+            bitmap = " ".join(f"{word:x}" for word in reversed(words)) + "\n"
+            (device / "capabilities/key").write_text(bitmap, encoding="ascii")
+
+            with (
+                mock.patch.object(back_paddles, "INPUT_SYSFS", root),
+                mock.patch.object(back_paddles, "evdev", None),
+                mock.patch.object(back_paddles, "ecodes", None),
+                mock.patch.object(back_paddles, "_input_candidates", return_value=[Path("/dev/input/event11")]),
+            ):
+                info = back_paddles.rsinput_device_info()
+
+        self.assertEqual(info["name"], "AYN Odin3 Gamepad")
+        self.assertEqual(info["path"], "/dev/input/event11")
+        self.assertEqual(info["m1Code"], 710)
+        self.assertEqual(info["m2Code"], 708)
+
+
+class PaddleInterpreterTests(unittest.TestCase):
+    def test_taps_fire_on_release(self):
+        fired = []
+        interpreter = paddle_daemon.PaddleInterpreter(fired.append)
+        interpreter.handle(back_paddles.RSINPUT_M1_CODE, 1)
+        interpreter.handle(back_paddles.RSINPUT_M1_CODE, 0)
+        interpreter.handle(back_paddles.RSINPUT_M2_CODE, 1)
+        interpreter.handle(back_paddles.RSINPUT_M2_CODE, 0)
+        self.assertEqual(fired, ["m1", "m2"])
+
+    def test_two_paddle_chord_fires_once_and_suppresses_taps(self):
+        fired = []
+        interpreter = paddle_daemon.PaddleInterpreter(fired.append)
+        interpreter.handle(back_paddles.RSINPUT_M1_CODE, 1)
+        interpreter.handle(back_paddles.RSINPUT_M2_CODE, 1)
+        interpreter.handle(back_paddles.RSINPUT_M1_CODE, 0)
+        interpreter.handle(back_paddles.RSINPUT_M2_CODE, 0)
+        self.assertEqual(fired, ["m1_m2"])
+
+    def test_home_hotkey_chords_do_not_double_fire_tap_actions(self):
+        fired = []
+        interpreter = paddle_daemon.PaddleInterpreter(fired.append)
+        interpreter.handle(paddle_daemon.BTN_HOME, 1)
+        interpreter.handle(back_paddles.RSINPUT_M1_CODE, 1)
+        interpreter.handle(back_paddles.RSINPUT_M1_CODE, 0)
+        interpreter.handle(paddle_daemon.BTN_HOME, 0)
+        self.assertEqual(fired, [])
+
+        interpreter.handle(back_paddles.RSINPUT_M2_CODE, 1)
+        interpreter.handle(paddle_daemon.BTN_HOME, 1)
+        interpreter.handle(paddle_daemon.BTN_HOME, 0)
+        interpreter.handle(back_paddles.RSINPUT_M2_CODE, 0)
+        self.assertEqual(fired, ["home_m2"])
 
 
 class PaddleActionTests(unittest.TestCase):
@@ -333,6 +442,242 @@ class PowerDetectionTests(unittest.TestCase):
                 mock.patch.object(power, "SIMPLE_DECKY_TDP", plugin),
             ):
                 self.assertIn("SimpleDeckyTDP", power.unsupported_reason())
+
+
+class CpuLimitTests(unittest.TestCase):
+    @staticmethod
+    def status(mode="adaptive"):
+        return {
+            "available": True,
+            "mode": mode,
+            "global_cap": "85",
+            "global_target_fps": "60",
+            "running": mode != "off",
+            "temp": 64.5,
+            "fan_percent": 40,
+            "fps": 59.8,
+            "session": {
+                "cap": "auto",
+                "fps_path": cpu_limit.GAMESCOPE_STATS,
+                "target_fps": "auto",
+            },
+        }
+
+    def test_reports_native_limiter_and_distinguishes_gamescope_sampler(self):
+        with tempfile.TemporaryDirectory() as temp:
+            helper = Path(temp) / "batocera-cpu-limit"
+            helper.touch()
+            result = subprocess.CompletedProcess([], 0, json.dumps(self.status()), "")
+            with (
+                mock.patch.object(cpu_limit, "HELPER", helper),
+                mock.patch.object(cpu_limit, "_result", return_value=result),
+            ):
+                state = cpu_limit.get_state()
+
+        self.assertTrue(state["supported"])
+        self.assertEqual(state["mode"], "adaptive")
+        self.assertEqual(state["globalCap"], "85")
+        self.assertEqual(state["fps"], 59.8)
+        self.assertEqual(state["dataSource"], "Steam / Gamescope stats")
+
+    def test_batches_persistent_values_and_applies_native_daemon_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            helper = Path(temp) / "batocera-cpu-limit"
+            helper.touch()
+            calls = []
+
+            def command(args, timeout=10):
+                calls.append((args, timeout))
+                if args == ["apply-mode"]:
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if args == ["status"]:
+                    return subprocess.CompletedProcess(args, 0, json.dumps(self.status()), "")
+                raise AssertionError(args)
+
+            with (
+                mock.patch.object(cpu_limit, "HELPER", helper),
+                mock.patch.object(cpu_limit, "_result", side_effect=command),
+                mock.patch.object(cpu_limit, "settings_set_many") as settings,
+            ):
+                saved = cpu_limit.save_state(
+                    {"mode": "adaptive", "globalCap": "85", "globalTargetFps": "60"}
+                )
+
+            settings.assert_called_once_with(
+                [
+                    (cpu_limit.MODE_SETTING, "adaptive"),
+                    (cpu_limit.GLOBAL_CAP_SETTING, "85"),
+                    (cpu_limit.GLOBAL_TARGET_SETTING, "60"),
+                ]
+            )
+            self.assertEqual([call[0] for call in calls].count(["apply-mode"]), 1)
+            self.assertTrue(saved["running"])
+
+    def test_rejects_unadvertised_values_before_writing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            helper = Path(temp) / "batocera-cpu-limit"
+            helper.touch()
+            with (
+                mock.patch.object(cpu_limit, "HELPER", helper),
+                mock.patch.object(cpu_limit, "settings_set_many") as settings,
+            ):
+                with self.assertRaisesRegex(ValueError, "mode"):
+                    cpu_limit.save_state(
+                        {"mode": "turbo", "globalCap": "85", "globalTargetFps": "60"}
+                    )
+            settings.assert_not_called()
+
+    @staticmethod
+    def tdp_status(mode="adaptive"):
+        return {
+            "available": True,
+            "saved_mode": mode,
+            "active_mode": mode,
+            "saved_target": "60",
+            "current_tdp": 14,
+            "daemon_running": mode == "adaptive",
+            "base_tdp": 18,
+            "min_tdp": 7,
+            "max_tdp": 18,
+            "hardware_min": 7,
+            "hardware_max": 30,
+            "fps_source": cpu_limit.TDP_GAMESCOPE_STATS,
+        }
+
+    def test_reports_native_x86_tdp_limiter_and_fresh_fps(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tdp_helper = root / "batocera-tdp-limit"
+            tdp_helper.touch()
+            fps_state = root / "fps.json"
+            fps_state.write_text(
+                json.dumps({"fps": 59.7, "timestamp": time.time()}),
+                encoding="utf-8",
+            )
+            result = subprocess.CompletedProcess([], 0, json.dumps(self.tdp_status()), "")
+            with (
+                mock.patch.object(cpu_limit, "HELPER", root / "missing-cpu-limit"),
+                mock.patch.object(cpu_limit, "TDP_HELPER", tdp_helper),
+                mock.patch.object(cpu_limit, "TDP_FPS_STATE", fps_state),
+                mock.patch.object(cpu_limit, "_tdp_result", return_value=result),
+            ):
+                state = cpu_limit.get_state()
+
+        self.assertTrue(state["supported"])
+        self.assertEqual(state["kind"], "tdp")
+        self.assertEqual(state["currentTdp"], 14)
+        self.assertEqual(state["minTdp"], 7)
+        self.assertEqual(state["maxTdp"], 18)
+        self.assertEqual(state["fps"], 59.7)
+        self.assertEqual(state["dataSource"], "Steam / Gamescope stats")
+        self.assertEqual(state["capOptions"], [])
+
+    def test_tdp_settings_apply_adaptive_and_stop_off_session(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tdp_helper = root / "batocera-tdp-limit"
+            tdp_helper.touch()
+            calls = []
+            current_mode = "adaptive"
+
+            def command(args, timeout=10):
+                nonlocal current_mode
+                calls.append((args, timeout))
+                if args == ["apply-mode"]:
+                    current_mode = "adaptive"
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if args == ["game-stop"]:
+                    current_mode = "off"
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                if args == ["json"]:
+                    return subprocess.CompletedProcess(args, 0, json.dumps(self.tdp_status(current_mode)), "")
+                raise AssertionError(args)
+
+            with (
+                mock.patch.object(cpu_limit, "HELPER", root / "missing-cpu-limit"),
+                mock.patch.object(cpu_limit, "TDP_HELPER", tdp_helper),
+                mock.patch.object(cpu_limit, "_tdp_result", side_effect=command),
+                mock.patch.object(cpu_limit, "settings_set_many") as settings,
+            ):
+                adaptive = cpu_limit.save_state(
+                    {"mode": "adaptive", "globalCap": "auto", "globalTargetFps": "60"}
+                )
+                stopped = cpu_limit.save_state(
+                    {"mode": "off", "globalCap": "auto", "globalTargetFps": "60"}
+                )
+
+        self.assertTrue(adaptive["running"])
+        self.assertFalse(stopped["running"])
+        self.assertIn((["apply-mode"], 20), calls)
+        self.assertIn((["game-stop"], 20), calls)
+        self.assertEqual(
+            settings.call_args_list,
+            [
+                mock.call([(cpu_limit.TDP_MODE_SETTING, "adaptive"), (cpu_limit.TDP_TARGET_SETTING, "60")]),
+                mock.call([(cpu_limit.TDP_MODE_SETTING, "off"), (cpu_limit.TDP_TARGET_SETTING, "60")]),
+            ],
+        )
+
+
+class FanControlTests(unittest.TestCase):
+    @staticmethod
+    def status(mode="auto", target=None):
+        return {
+            "available": True,
+            "control": True,
+            "name": "qcom-fan",
+            "rpm": 4200,
+            "percent": 40,
+            "mode": mode,
+            "target_percent": target,
+        }
+
+    def test_manual_uses_same_native_set_command_as_control_center(self):
+        with tempfile.TemporaryDirectory() as temp:
+            helper = Path(temp) / "qcom-fan"
+            helper.touch()
+            calls = []
+
+            def command(args, timeout=10):
+                calls.append((args, timeout))
+                if args == ["json"]:
+                    status = self.status("manual", 55) if ["set", "55"] in [item[0] for item in calls] else self.status()
+                    return subprocess.CompletedProcess(args, 0, json.dumps(status), "")
+                if args == ["set", "55"]:
+                    return subprocess.CompletedProcess(args, 0, "55\n", "")
+                raise AssertionError(args)
+
+            with (
+                mock.patch.object(fan_control, "HELPER", helper),
+                mock.patch.object(fan_control, "_result", side_effect=command),
+            ):
+                state = fan_control.save_state({"mode": "manual", "targetPercent": 55})
+
+        self.assertIn((["set", "55"], 20), calls)
+        self.assertEqual(state["mode"], "manual")
+        self.assertEqual(state["targetPercent"], 55)
+
+    def test_auto_restores_temperature_curve(self):
+        with tempfile.TemporaryDirectory() as temp:
+            helper = Path(temp) / "qcom-fan"
+            helper.touch()
+            calls = []
+
+            def command(args, timeout=10):
+                calls.append(args)
+                if args == ["json"]:
+                    return subprocess.CompletedProcess(args, 0, json.dumps(self.status()), "")
+                if args == ["auto"]:
+                    return subprocess.CompletedProcess(args, 0, "", "")
+                raise AssertionError(args)
+
+            with (
+                mock.patch.object(fan_control, "HELPER", helper),
+                mock.patch.object(fan_control, "_result", side_effect=command),
+            ):
+                fan_control.save_state({"mode": "auto", "targetPercent": 40})
+
+        self.assertEqual(calls.count(["auto"]), 1)
 
 
 class LsfgTests(unittest.TestCase):

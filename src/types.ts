@@ -21,6 +21,50 @@ export interface PowerConfig {
   underclocks: Record<string, Record<string, Record<string, string>>>;
 }
 
+export interface CpuLimitState {
+  supported: boolean;
+  reason: string;
+  kind: "cpu" | "tdp";
+  mode: string;
+  globalCap: string;
+  globalTargetFps: string;
+  running: boolean;
+  temperatureC: number | null;
+  fanPercent: number | null;
+  fps: number | null;
+  currentTdp: number | null;
+  minTdp: number | null;
+  maxTdp: number | null;
+  session: Record<string, any>;
+  dataSource: string;
+  modeOptions: string[];
+  capOptions: string[];
+  targetOptions: string[];
+}
+
+export interface CpuLimitConfig {
+  mode: string;
+  globalCap: string;
+  globalTargetFps: string;
+}
+
+export interface FanControlState {
+  supported: boolean;
+  reason: string;
+  controllable: boolean;
+  name: string;
+  mode: string;
+  percent: number | null;
+  targetPercent: number | null;
+  rpm: number | null;
+  minimumManualPercent: number;
+}
+
+export interface FanControlConfig {
+  mode: "auto" | "manual";
+  targetPercent: number;
+}
+
 export interface GameTweak {
   enabled?: boolean;
   name?: string;
@@ -106,6 +150,7 @@ export interface OledCareRuntime {
 
 export interface OledCareState {
   supported: boolean;
+  panelDetected: boolean;
   reason?: string;
   config: OledCareConfig;
   labels: Record<string, string>;
@@ -126,6 +171,14 @@ export interface BackPaddleState {
   supported: boolean;
   reason?: string;
   warning?: string;
+  source?: "rsinput" | "gpio" | "";
+  device?: {
+    name?: string;
+    path?: string;
+    m1Code?: number;
+    m2Code?: number;
+  };
+  serviceRunning?: boolean;
   bindings: BackPaddleBindings;
   slots: DropdownChoice[];
   actions: DropdownChoice[];
@@ -163,6 +216,8 @@ export interface Config {
   powerDefaults: PowerConfig;
   powerSupported: boolean;
   powerReason: string;
+  cpuLimit?: CpuLimitState;
+  fanControl?: FanControlState;
   tweaks: Tweaks;
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;

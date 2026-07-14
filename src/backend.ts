@@ -1,9 +1,13 @@
 import { call } from "@decky/api";
-import type { BackPaddleBindings, BackPaddleState, CalibrationState, Capture, Config, InstalledGame, JoystickLedConfig, JoystickLedState, LsfgConfig, LsfgState, OledCareConfig, OledCareState, PowerConfig, Tweaks } from "./types";
+import type { BackPaddleBindings, BackPaddleState, CalibrationState, Capture, Config, CpuLimitConfig, CpuLimitState, FanControlConfig, FanControlState, InstalledGame, JoystickLedConfig, JoystickLedState, LsfgConfig, LsfgState, OledCareConfig, OledCareState, PowerConfig, Tweaks } from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
 export const savePowerConfig = (data: PowerConfig) => call<[PowerConfig], Config>("save_power_config", data);
+export const getCpuLimit = () => call<[], CpuLimitState>("get_cpu_limit");
+export const saveCpuLimit = (data: CpuLimitConfig) => call<[CpuLimitConfig], CpuLimitState>("save_cpu_limit", data);
+export const getFanControl = () => call<[], FanControlState>("get_fan_control");
+export const saveFanControl = (data: FanControlConfig) => call<[FanControlConfig], FanControlState>("save_fan_control", data);
 export const saveTweaks = (data: Tweaks) => call<[Tweaks], Config>("save_tweaks", data);
 export const getCompatApplied = () => call<[], string[]>("get_compat_applied");
 let compatAppliedSaveChain = Promise.resolve<unknown>(undefined);

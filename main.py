@@ -10,6 +10,10 @@ from armada_control.calibration import (
 )
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
+from armada_control.cpu_limit import get_state as cpu_limit_state
+from armada_control.cpu_limit import save_state as save_cpu_limit
+from armada_control.fan_control import get_state as fan_control_state
+from armada_control.fan_control import save_state as save_fan_control
 from armada_control.joystick_led import save_state as save_joystick_led
 from armada_control.lsfg import save_state as save_lsfg
 from armada_control.lsfg import set_game_enabled as set_lsfg_game_enabled
@@ -31,6 +35,18 @@ class Plugin:
     async def save_power_config(self, data):
         await asyncio.to_thread(save_power_config, data)
         return await self.get_config()
+
+    async def get_cpu_limit(self):
+        return await asyncio.to_thread(cpu_limit_state)
+
+    async def save_cpu_limit(self, data):
+        return await asyncio.to_thread(save_cpu_limit, data)
+
+    async def get_fan_control(self):
+        return await asyncio.to_thread(fan_control_state)
+
+    async def save_fan_control(self, data):
+        return await asyncio.to_thread(save_fan_control, data)
 
     async def save_tweaks(self, data):
         await asyncio.to_thread(save_tweaks, data)

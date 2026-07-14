@@ -12,9 +12,22 @@ non-reproducible when upstream interfaces changed. It also allowed the plugin
 to overwrite the battery LED policy and inject a Steam launch helper that did
 not exist on Batocera.
 
-Version 0.2.5 is pinned to the provenance recorded in `SOURCE.json`. It keeps
+Version 0.2.6 is pinned to the provenance recorded in `SOURCE.json`. It keeps
 the system-owned status LED separate from the joystick rings and uses native
 Batocera services for SSH and RSInput calibration.
+
+### Rear paddles
+
+On current Odin 3 images, the plugin discovers M1/M2 from the AYN `rsinput`
+gamepad capabilities instead of opening GPIO lines directly. The Decky/FEX
+backend reads those capabilities through architecture-neutral sysfs; the
+native listener uses python-evdev, observes without grabbing, and reconnects
+if the controller is recreated after resume. It therefore coexists with Steam,
+ES, emulators, and Batocera's in-game Hotkey+paddle mappings. Older images with
+the legacy `odin_backpaddles` GPIO service remain supported as a fallback.
+M2 has no action on a fresh install; mouse mode remains opt-in because it
+temporarily replaces normal gamepad navigation until the paddle is pressed
+again.
 
 ## Install on Batocera
 
@@ -55,10 +68,38 @@ one control tab is loaded, while retaining its config and `~/lsfg` script for
 rollback. Remove the old `~/lsfg` prefix from per-game Steam launch options
 before using either Batocera activation mode.
 
+### Power, adaptive CPU/TDP, and fan control
+
+The Power tab retains the per-profile CPU/GPU/fan-curve editor and also wraps
+Batocera's native runtime controls. Qualcomm images use
+`batocera-cpu-limit`, including its persistent global CPU ceiling and target
+FPS. Zen3/x86 images automatically use `batocera-tdp-limit`, which adjusts
+package power inside the hardware and user-selected TDP limits without taking
+ownership of the normal TDP slider. Steam sessions read Gamescope statistics
+while ES-launched emulators use the system's hidden FPS sampler. That sampler
+is independent of Steam's visible MangoHud performance overlay.
+
+On supported Qualcomm handhelds, the same tab exposes `qcom-fan` Automatic and
+Manual modes used by Batocera Control Center. Automatic follows the system
+temperature curve. Manual holds the selected 20–100% setting until Automatic
+is selected again or the system restarts, and the UI warns that the curve is
+temporarily overridden. Unsupported or read-only fan implementations are not
+offered as writable controls.
+
+### OLED care and screensaver
+
+Where the Odin OLED idle-dim service is present, the OLED tab configures its
+brightness cap and idle threshold. A detected Odin OLED panel also gets a
+manual mostly-black moving screensaver even when the older idle-dim service is
+not installed. It keeps Steam and downloads running, does not suspend or
+modify saved brightness, and exits on the first controller button, keyboard
+key, or touch input.
+
 On x86 handhelds, the x64/Wine layer is sufficient. Compatibility-tool,
 resolution, LED, and LSFG controls remain available, while the ARM-only FEX
-controls are disabled. Existing Batocera AMD TDP/SimpleDeckyTDP controls stay
-authoritative so two Decky backends cannot race the same power limits.
+controls are disabled. Existing Batocera AMD TDP/SimpleDeckyTDP controls remain
+the source of the manual ceiling; adaptive TDP only moves below that ceiling
+during a game session and restores the prior value when stopped.
 
 ## Develop and verify
 
